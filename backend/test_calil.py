@@ -86,7 +86,7 @@ def test_poisoned_offer_keeps_siblings():
 
 def test_registry_lists_calil_and_vegas():
     names = source_names()
-    assert names == ["calil", "vegas", "zuk"]
+    assert names == ["calil", "vegas", "zuk", "mega"]
 
 
 if __name__ == "__main__":
