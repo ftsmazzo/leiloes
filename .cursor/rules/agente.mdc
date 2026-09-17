@@ -12,6 +12,7 @@ Regras rápidas:
 - Toda tarefa vira Issue com um rótulo: `Correção`, `Melhoria` ou `Nova função`.
 - Todo PR cita a Issue, o que mudou, como validou, riscos e próximos passos.
 - Motion: skill `kylezantos/design-motion-principles` (Emil + Jakub). Dashboard = restrição, <300ms, `prefers-reduced-motion`. Sem pulse/stagger/hover-scale em tudo.
+- GitHub só `ftsmazzo` (`venda-epis` e `leiloes`). Não usar `fredmazzo-ia`.
 - Não misture venda-epis com Leilões. Não commite `.env`. Não invente scrape de site fechado nem pule CAPTCHA.
 - Qualidade: o que já está no CI entra; não instale Sentry+Datadog+New Relic juntos, nem Stryker/Endtest/Knip sem Issue.
 - Jurídico (termos/privacidade) é Issue humana — agente não “aprova”.
