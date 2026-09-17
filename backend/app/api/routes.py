@@ -305,6 +305,7 @@ async def avaliar_lot(lot_id: int, db: AsyncSession = Depends(get_db)):
     if not lot.url:
         raise HTTPException(409, "Lote sem URL pública para buscar o edital.")
     extra = raw_dict(lot)
+    extra["source"] = source
     _avaliar_running = True
     try:
         filled = await asyncio.to_thread(

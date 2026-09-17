@@ -55,6 +55,34 @@ def test_leiloeiro_diverge_entre_edital_e_anuncio():
     assert riscos["leiloeiro_ok"] is False
 
 
+def test_calil_no_site_e_no_edital_nao_diverge():
+    riscos = riscos_from_text(
+        "Leiloeiro público oficial Marcelo Calil, inscrito na Junta Comercial.",
+        page_text="Calil Leilões. O leiloeiro não se responsabiliza pela descrição.",
+        source="calil",
+    )
+    assert riscos.get("leiloeiro_ok") is not False
+
+
+def test_casa_calil_pelo_source_bate_com_edital():
+    riscos = riscos_from_text(
+        "Hasta pública conduzida por Calil Leilões.",
+        page_text="Apartamento em Ribeirão Preto. Lance inicial R$ 200.000,00.",
+        source="calil",
+    )
+    assert riscos["leiloeiro_ok"] is True
+
+
+def test_disclaimer_do_leiloeiro_nao_vira_nome():
+    riscos = riscos_from_text(
+        "Leiloeiro público oficial Marcelo Calil.",
+        page_text="O leiloeiro não se responsabiliza pela veracidade das informações.",
+        source="calil",
+    )
+    assert riscos.get("leiloeiro_ok") is not False
+    assert "responsabiliza" not in (riscos.get("leiloeiro_site") or "").lower()
+
+
 def test_sem_texto_nao_inventa_citacao():
     riscos = riscos_from_text("Apartamento com 2 dormitórios, vaga de garagem.")
     assert "citacao" not in riscos
@@ -71,5 +99,8 @@ if __name__ == "__main__":
     test_meacao_e_conjuge()
     test_conjuge_do_arrematante_nao_e_meacao()
     test_leiloeiro_diverge_entre_edital_e_anuncio()
+    test_calil_no_site_e_no_edital_nao_diverge()
+    test_casa_calil_pelo_source_bate_com_edital()
+    test_disclaimer_do_leiloeiro_nao_vira_nome()
     test_sem_texto_nao_inventa_citacao()
     print("ok")

@@ -185,9 +185,32 @@ def test_laudo_mais_antigo_sobe_score():
     cinco = compute_score(avaliacao_data="2021-09-17", **kwargs)
     dez = compute_score(avaliacao_data="2016-09-17", **kwargs)
     assert recente["score"] < cinco["score"] < dez["score"]
-    assert any("1 ano" in m for m in recente["motivos"])
-    assert any("5 anos" in m for m in cinco["motivos"])
+    assert any("1 ano" in m and "oportunidade" in m for m in recente["motivos"])
+    assert any("5 anos" in m and "oportunidade" in m for m in cinco["motivos"])
     assert any("10 anos" in m and "forte oportunidade" in m for m in dez["motivos"])
+
+
+def test_laudo_antigo_acima_nao_e_overpay():
+    hoje = date(2026, 9, 17)
+    recente = compute_score(
+        title="Casa",
+        current_bid=250000,
+        reference_value=200000,
+        fonte_avaliacao="laudo",
+        avaliacao_data="2026-08-01",
+        hoje=hoje,
+    )
+    antigo = compute_score(
+        title="Casa",
+        current_bid=250000,
+        reference_value=200000,
+        fonte_avaliacao="laudo",
+        avaliacao_data="2016-09-17",
+        hoje=hoje,
+    )
+    assert recente["score"] < antigo["score"]
+    assert any("oportunidade" in m and "não overpay" in m for m in antigo["motivos"])
+    assert any("forte oportunidade" in m for m in antigo["motivos"])
 
 
 def test_nao_citado_limita_score_ao_fundo():
@@ -252,6 +275,7 @@ if __name__ == "__main__":
     test_alerta_quando_lance_atual_supera_avaliacao()
     test_venal_nao_penaliza_lance_acima_do_iptu()
     test_laudo_mais_antigo_sobe_score()
+    test_laudo_antigo_acima_nao_e_overpay()
     test_nao_citado_limita_score_ao_fundo()
     test_usufruto_e_meacao_limitam_score()
     test_citado_nao_aplica_teto()

@@ -75,7 +75,8 @@ function formatLaudoDate(iso: string): string {
   const years = Math.max(0, Math.round((Date.now() - stamp) / (365.25 * 24 * 3600 * 1000)));
   const month = String(when.getMonth() + 1).padStart(2, '0');
   const label = years === 1 ? '1 ano' : `${years} anos`;
-  return `${month}/${when.getFullYear()} · ${label}`;
+  const opp = years >= 1 ? ' · oportunidade' : '';
+  return `${month}/${when.getFullYear()} · ${label}${opp}`;
 }
 
 export type ScoreTier = 'alto' | 'baixo' | 'neutro' | 'sem-preco';

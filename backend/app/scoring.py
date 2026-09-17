@@ -14,6 +14,8 @@ o número é parcial, calculado só com os fatores que têm dado.
 
 Valor venal de IPTU não é laudo de mercado: lance acima do venal é comum
 e não conta como overpay. Lance abaixo do venal ainda é sinal positivo.
+Laudo antigo também não é preço de mercado: lance acima dele não é overpay;
+quanto mais antigo, melhor a oportunidade (juiz só corrige monetariamente).
 """
 from __future__ import annotations
 
@@ -88,12 +90,21 @@ def _precisa_condo(tipo: Optional[str], blob: str) -> bool:
     return bool(RE_PRECISA_CONDO.search(blob))
 
 
+def _anos_avaliacao(avaliacao_data: Optional[Any], hoje: Optional[date] = None) -> Optional[float]:
+    quando = _as_date(avaliacao_data)
+    if quando is None:
+        return None
+    return idade_anos(quando, hoje)
+
+
 def _fator_desconto(
     current_bid: Optional[float],
     minimum_bid: Optional[float],
     reference_value: Optional[float],
     valor_mercado_estimado: Optional[float],
     fonte_avaliacao: Optional[str] = None,
+    avaliacao_data: Optional[Any] = None,
+    hoje: Optional[date] = None,
 ) -> tuple[Optional[float], Optional[str], Optional[str]]:
     """Desconto pelo lance inicial. Lance atual acima do inicial não penaliza."""
     lance = _lance_inicial(current_bid, minimum_bid)
@@ -112,10 +123,19 @@ def _fator_desconto(
     else:
         return None, None, None
     desconto_pct = (referencia - lance) / referencia
+    anos = _anos_avaliacao(avaliacao_data, hoje)
+    laudo_antigo = fonte == FONTE_LAUDO and anos is not None and anos >= 1
     if fonte == FONTE_VENAL and desconto_pct < 0:
         detalhe = (
             f"lance inicial acima do valor venal do imóvel ({_brl(referencia)}); "
             "venal de IPTU não é preço de mercado — não conta como overpay"
+        )
+        return None, detalhe, fonte
+    if laudo_antigo and desconto_pct < 0:
+        n_txt = "1 ano" if round(anos) == 1 else f"{anos:.0f} anos"
+        detalhe = (
+            f"lance inicial acima da avaliação de {n_txt} ({_brl(referencia)}); "
+            "laudo antigo não é preço de mercado — oportunidade, não overpay"
         )
         return None, detalhe, fonte
     nota = max(-1.0, min(1.0, desconto_pct / 0.5))  # 50% de desconto satura a nota
@@ -133,16 +153,21 @@ def _alerta_lance_vs_avaliacao(
     reference_value: Optional[float],
     valor_mercado_estimado: Optional[float],
     fonte_avaliacao: Optional[str] = None,
+    avaliacao_data: Optional[Any] = None,
+    hoje: Optional[date] = None,
 ) -> Optional[str]:
     atual = _lance_atual(current_bid, minimum_bid)
     if atual is None:
         return None
     if valor_mercado_estimado and valor_mercado_estimado > 0:
         referencia, rotulo = valor_mercado_estimado, "referência de mercado"
+        antigo = False
     elif reference_value and reference_value > 0:
         fonte = fonte_avaliacao if fonte_avaliacao in (FONTE_LAUDO, FONTE_VENAL) else FONTE_LAUDO
         rotulo = "valor venal do imóvel (IPTU)" if fonte == FONTE_VENAL else "avaliação"
         referencia = reference_value
+        anos = _anos_avaliacao(avaliacao_data, hoje)
+        antigo = fonte == FONTE_LAUDO and anos is not None and anos >= 1
     else:
         return None
     pct = (referencia - atual) / referencia
@@ -154,6 +179,13 @@ def _alerta_lance_vs_avaliacao(
         return f"lance atual {_brl(atual)} ainda {pct * 100:.0f}% abaixo da {rotulo}"
     if pct >= 0:
         return f"lance atual {_brl(atual)} já encosta na {rotulo}"
+    if antigo:
+        anos = _anos_avaliacao(avaliacao_data, hoje) or 0
+        n_txt = "1 ano" if round(anos) == 1 else f"{anos:.0f} anos"
+        return (
+            f"lance atual {_brl(atual)} está {abs(pct) * 100:.0f}% acima da avaliação "
+            f"de {n_txt} — laudo defasado, oportunidade, não overpay"
+        )
     return f"atenção: lance atual {_brl(atual)} está {abs(pct) * 100:.0f}% acima da {rotulo}"
 
 
@@ -322,8 +354,8 @@ def _fator_idade(
     data_txt = quando.strftime("%m/%Y")
     if origem == "processo":
         detalhe = (
-            f"processo de {n_txt} ({data_txt}) — tramitação longa; "
-            "avaliação de referência tende a ficar defasada"
+            f"processo de {n_txt} ({data_txt}) — oportunidade: "
+            "avaliação de referência defasada, abaixo do mercado"
         )
     elif anos >= 10:
         detalhe = (
@@ -332,11 +364,13 @@ def _fator_idade(
         )
     elif anos >= 5:
         detalhe = (
-            f"laudo de {n_txt} ({data_txt}) — correção monetária costuma ficar abaixo do mercado"
+            f"laudo de {n_txt} ({data_txt}) — oportunidade: "
+            "correção monetária costuma ficar abaixo do mercado"
         )
     else:
         detalhe = (
-            f"laudo de {n_txt} ({data_txt}) — já há descompasso frente ao mercado atual"
+            f"laudo de {n_txt} ({data_txt}) — oportunidade: "
+            "já há descompasso frente ao mercado atual"
         )
     return nota, detalhe
 
@@ -411,6 +445,8 @@ def compute_score(
         reference_value,
         valor_mercado_estimado,
         fonte_avaliacao,
+        avaliacao_data=avaliacao_data,
+        hoje=hoje,
     )
     alerta_lance = _alerta_lance_vs_avaliacao(
         current_bid,
@@ -418,6 +454,8 @@ def compute_score(
         reference_value,
         valor_mercado_estimado,
         fonte_avaliacao,
+        avaliacao_data=avaliacao_data,
+        hoje=hoje,
     )
     concorrencia = _motivo_concorrencia(current_bid, minimum_bid)
     nota_risco, detalhe_risco = _fator_risco(blob, ocupacao=ocupacao)

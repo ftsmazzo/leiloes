@@ -295,7 +295,7 @@ def _pick_avaliacao(blob: str) -> dict[str, Any]:
     return out
 
 
-def fields_from_text(blob: str, page_text: str = "") -> dict[str, Any]:
+def fields_from_text(blob: str, page_text: str = "", source: str = "") -> dict[str, Any]:
     out: dict[str, Any] = {}
     out.update(_pick_avaliacao(blob))
     out.update(avaliacao_data_from_text(blob))
@@ -334,7 +334,7 @@ def fields_from_text(blob: str, page_text: str = "") -> dict[str, Any]:
         out["tem_divida"] = bool(condo or mencao_condo)
     elif desocupado or ocupado or sem_divida:
         out["tem_divida"] = False
-    riscos = riscos_from_text(blob, page_text)
+    riscos = riscos_from_text(blob, page_text, source=source)
     if riscos:
         out["riscos"] = riscos
         if riscos.get("processo_cnj"):
@@ -447,9 +447,12 @@ def _mistral_parecer(facts: dict[str, Any]) -> str | None:
                             "avaliacao_fonte=venal_imovel é IPTU, não laudo de mercado. "
                             "avaliacao_data antiga é oportunidade: o juiz costuma só corrigir "
                             "monetariamente, abaixo do mercado. 1 ano já é bom; 5+ melhor; 10+ melhor ainda. "
+                            "Lance acima de laudo antigo NÃO é overpay e NÃO é ponto negativo. "
                             "IPTU em leilão judicial em geral é abatido; condomínio NÃO se abate. "
                             "Lance atual acima do inicial é concorrência, não ponto negativo. "
-                            "Alerta o lance atual em relação à avaliação. "
+                            "Alerta o lance atual em relação à avaliação recente; laudo antigo continua oportunidade. "
+                            "Leiloeiro da mesma casa (Calil, Zuk, Vegas, Mega, Lance) no site e no edital "
+                            "é o mesmo — não diga divergência. "
                             "citacao nao_citado ou pendente: diga para não entrar. "
                             "Usufruto e meação/fração são risco alto. "
                             "DataJud só traz movimentos, não peças do processo. "
@@ -527,7 +530,11 @@ def avaliar_lote(
             texts.append(f"[{doc['tipo']}] {text}")
 
     blob = "\n".join(texts)
-    extracted = fields_from_text(blob, page_text[:8000])
+    extracted = fields_from_text(
+        blob,
+        page_text[:8000],
+        source=str(extra.get("source") or ""),
+    )
     out = dict(extra)
     out["docs"] = stored_docs
     out["avaliado_em"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
