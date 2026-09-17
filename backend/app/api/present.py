@@ -8,10 +8,11 @@ from app.scrapers.extract import format_card, tipo_from_text
 
 
 def lot_to_out(lot: LotModel, source: str) -> LotOut:
+    raw = raw_dict(lot)
     extra = format_card(
         getattr(lot, "title", None) or "",
         getattr(lot, "description", None),
-        raw_dict(lot),
+        raw,
     )
     tipo = extra.get("tipo") or tipo_of(lot) or tipo_from_text(getattr(lot, "title", None), getattr(lot, "category", None))
     return LotOut(
@@ -32,6 +33,9 @@ def lot_to_out(lot: LotModel, source: str) -> LotOut:
         foto=foto_of(lot) or (extra.get("foto") if isinstance(extra.get("foto"), str) and extra["foto"].startswith("http") and "facebook.com/tr" not in extra["foto"] else None),
         valor_m2_regiao=extra.get("valor_m2_regiao"),
         valor_mercado_estimado=extra.get("valor_mercado_estimado"),
+        score=raw.get("score"),
+        score_tem_comparacao_preco=raw.get("score_tem_comparacao_preco"),
+        score_motivos=raw.get("score_motivos") or [],
         minimum_bid=lot.minimum_bid,
         current_bid=lot.current_bid,
         reference_value=lot.reference_value,

@@ -15,6 +15,7 @@ from app.scrapers.persist import persist_auctions
 from app.scrapers.registry import all_scrapers
 from app.scrapers.extract import enrich_extra, extra_json
 from app.scrapers.market_price import estimate_market_value
+from app.scoring import compute_score
 import json
 
 
@@ -36,6 +37,17 @@ def _enrich_auctions(auctions, cap: int = 12) -> None:
             mercado = estimate_market_value(filled.get("cidade"), filled.get("area"))
             if mercado:
                 filled.update(mercado)
+            score_info = compute_score(
+                title=lot.title,
+                description=lot.description,
+                current_bid=lot.current_bid,
+                minimum_bid=lot.minimum_bid,
+                reference_value=lot.reference_value,
+                valor_mercado_estimado=filled.get("valor_mercado_estimado"),
+            )
+            filled["score"] = score_info["score"]
+            filled["score_tem_comparacao_preco"] = score_info["tem_comparacao_preco"]
+            filled["score_motivos"] = score_info["motivos"]
             lot.raw_data = extra_json(filled)
             if filled.get("tipo") and not lot.category:
                 lot.category = str(filled["tipo"])

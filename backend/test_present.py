@@ -71,9 +71,52 @@ def test_lot_to_out_market_reference_absent_is_none_not_zero():
     assert out.valor_mercado_estimado is None
 
 
+def test_lot_to_out_exposes_score_when_present():
+    lot = SimpleNamespace(
+        id=4,
+        auction_id=9,
+        external_id="818004",
+        title="Casa em 2ª Praça",
+        description=None,
+        category="Imóvel",
+        minimum_bid=100000,
+        current_bid=100000,
+        reference_value=None,
+        url=None,
+        raw_data='{"score": 62, "score_tem_comparacao_preco": false, "score_motivos": ["sem referência de preço pra comparar — score calculado só com risco/praça", "já na 2ª praça — desconto judicial maior, mas prazo mais curto"]}',
+        updated_at=datetime(2026, 9, 17),
+    )
+    out = lot_to_out(lot, "lance")
+    assert out.score == 62
+    assert out.score_tem_comparacao_preco is False
+    assert len(out.score_motivos) == 2
+
+
+def test_lot_to_out_score_absent_defaults_to_empty_motivos():
+    lot = SimpleNamespace(
+        id=5,
+        auction_id=9,
+        external_id="818005",
+        title="Casa antiga no banco",
+        description=None,
+        category="Imóvel",
+        minimum_bid=100000,
+        current_bid=100000,
+        reference_value=None,
+        url=None,
+        raw_data='{"cidade": "Formiga"}',
+        updated_at=datetime(2026, 9, 17),
+    )
+    out = lot_to_out(lot, "mega")
+    assert out.score is None
+    assert out.score_motivos == []
+
+
 if __name__ == "__main__":
     test_lot_to_out_exposes_source_and_cidade()
     test_registry_sources_are_catalog_tabs()
     test_lot_to_out_exposes_market_reference_when_present()
     test_lot_to_out_market_reference_absent_is_none_not_zero()
+    test_lot_to_out_exposes_score_when_present()
+    test_lot_to_out_score_absent_defaults_to_empty_motivos()
     print("ok")
