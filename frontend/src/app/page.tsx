@@ -141,7 +141,7 @@ export default function Home() {
 
   const emptyHint =
     source === 'demo'
-      ? 'A base demo ainda não tem lotes persistidos. Calil e Vegas entram pelo scrape.'
+      ? 'A base demo ainda não tem lotes persistidos. As outras bases entram pelo scrape.'
       : 'Nenhum lote nesta base com esses filtros. Rode o scrape ou altere cidade, tipo e teto.';
 
   return (
