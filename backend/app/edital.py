@@ -158,15 +158,33 @@ def collect_pdfs(html: str, base_url: str) -> list[dict[str, str]]:
     return out[:MAX_PDFS]
 
 
-def precos_from_page(page_text: str) -> dict[str, float]:
-    """Lance e avaliação visíveis na página pública. Não inventa."""
+def precos_from_page(page_text: str = "", html: str = "") -> dict[str, float]:
+    """Lance e avaliação da página pública. A página manda; o PDF curto não apaga isso."""
+    html = (html or "").replace("\xa0", " ").replace("&nbsp;", " ")
+    text = (page_text or "").replace("\xa0", " ")
+    if html and not text:
+        text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
     out: dict[str, float] = {}
-    atual = parse_br_currency(m.group(1)) if (m := RE_VALOR_ATUAL.search(page_text or "")) else None
-    aval = parse_br_currency(m.group(1)) if (m := RE_VALOR_AVAL_PAGINA.search(page_text or "")) else None
-    if atual and atual > 0:
-        out["lance_pagina"] = atual
-    if aval and aval > 0:
-        out["avaliacao_pagina"] = aval
+    if html:
+        soup = BeautifulSoup(html, "html.parser")
+        for block in soup.select(".product-detail"):
+            blob = re.sub(r"\s+", " ", block.get_text(" ", strip=True))
+            money = parse_br_currency(m.group(1)) if (m := re.search(r"R\$\s*([\d.]+,\d{2})", blob)) else None
+            if not money or money <= 0:
+                continue
+            low = blob.lower()
+            if low.startswith("valor atual"):
+                out["lance_pagina"] = money
+            elif low.startswith("valor de avalia"):
+                out["avaliacao_pagina"] = money
+    if "lance_pagina" not in out:
+        atual = parse_br_currency(m.group(1)) if (m := RE_VALOR_ATUAL.search(text)) else None
+        if atual and atual > 0:
+            out["lance_pagina"] = atual
+    if "avaliacao_pagina" not in out:
+        aval = parse_br_currency(m.group(1)) if (m := RE_VALOR_AVAL_PAGINA.search(text)) else None
+        if aval and aval > 0:
+            out["avaliacao_pagina"] = aval
     return out
 
 
@@ -595,12 +613,14 @@ def avaliar_lote(
     if stored_docs and not blob.strip():
         out["edital_sem_texto"] = True
 
-    page_precos = precos_from_page(page_text)
+    page_precos = precos_from_page(page_text, html=html)
     if page_precos.get("lance_pagina"):
         out["lance_pagina"] = page_precos["lance_pagina"]
-    if page_precos.get("avaliacao_pagina") and not out.get("avaliacao_edital"):
+    if page_precos.get("avaliacao_pagina"):
+        out["avaliacao_pagina"] = page_precos["avaliacao_pagina"]
         out["avaliacao_edital"] = page_precos["avaliacao_pagina"]
-        out["avaliacao_fonte"] = "laudo"
+        if not out.get("avaliacao_fonte"):
+            out["avaliacao_fonte"] = "laudo"
     lance_score = page_precos.get("lance_pagina") or current_bid
 
     riscos = dict(extracted.get("riscos") or {})
@@ -698,5 +718,9 @@ def apply_avaliacao_to_lot(lot, extra: dict[str, Any]) -> None:
     lance = extra.get("lance_pagina")
     if isinstance(lance, (int, float)) and lance > 0:
         lot.current_bid = float(lance)
+        lot.minimum_bid = float(lance)
+    aval_pagina = extra.get("avaliacao_pagina")
+    if isinstance(aval_pagina, (int, float)) and aval_pagina > 0:
+        lot.reference_value = float(aval_pagina)
     lot.raw_data = extra_json(extra)
     lot.updated_at = datetime.utcnow()

@@ -42,6 +42,7 @@ export type Lot = {
     citacao_fonte?: string;
     usufruto?: boolean;
     meacao?: boolean;
+    meacao_trecho?: string;
     nao_entrar?: boolean;
     processo_cnj?: string;
   } | null;
@@ -147,6 +148,7 @@ export function LotCard({ lot, onUpdated }: { lot: Lot; onUpdated?: (lot: Lot) =
             ))}
           </ul>
         ) : null}
+        {lot.riscos?.meacao_trecho ? <p className="lot-trecho">Trecho: «{lot.riscos.meacao_trecho}»</p> : null}
         <dl className="lot-dl">
           {lot.processo_cnj ? (
             <>

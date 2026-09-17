@@ -40,6 +40,7 @@ def test_livre_de_usufruto_nao_marca():
 def test_meacao_e_conjuge():
     riscos = riscos_from_text("Penhora da meação do executado e de sua cônjuge sobre o imóvel.")
     assert riscos["meacao"] is True
+    assert "penhora da meação" in riscos["meacao_trecho"].lower()
 
 
 def test_conjuge_do_arrematante_nao_e_meacao():

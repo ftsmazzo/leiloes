@@ -199,6 +199,12 @@ a {
   color: var(--ink);
 }
 
+.lot-trecho {
+  margin: 0.35rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
 .lot-docs {
   list-style: none;
   margin: 0;

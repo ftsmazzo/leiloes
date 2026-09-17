@@ -400,7 +400,13 @@ def _fator_juridico(riscos: Optional[dict[str, Any]]) -> tuple[Optional[float], 
         motivos.append("usufruto/uso e fruto na matrícula — risco alto (nua propriedade)")
     if riscos.get("meacao"):
         notas.append(-0.85)
-        motivos.append("cônjuge/meação/fração — conferir se o leilão vende 100% do imóvel")
+        trecho = riscos.get("meacao_trecho")
+        if isinstance(trecho, str) and trecho.strip():
+            motivos.append(
+                f"meação expressa no texto: «{trecho.strip()}» — conferir se o leilão vende 100%"
+            )
+        else:
+            motivos.append("meação expressa no edital — conferir se o leilão vende 100% do imóvel")
     if riscos.get("leiloeiro_ok") is False:
         notas.append(-0.3)
         motivos.append("leiloeiro do edital diverge do anúncio — conferir se é o mesmo processo")

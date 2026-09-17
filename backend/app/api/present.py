@@ -50,8 +50,16 @@ def lot_to_out(lot: LotModel, source: str) -> LotOut:
         nao_entrar=True if extra.get("nao_entrar") or raw.get("nao_entrar") else None,
         riscos=extra.get("riscos") if isinstance(extra.get("riscos"), dict) else (raw.get("riscos") if isinstance(raw.get("riscos"), dict) else None),
         minimum_bid=lot.minimum_bid,
-        current_bid=lot.current_bid,
-        reference_value=lot.reference_value,
+        current_bid=(
+            extra.get("lance_pagina")
+            if isinstance(extra.get("lance_pagina"), (int, float))
+            else lot.current_bid
+        ),
+        reference_value=(
+            extra.get("avaliacao_pagina")
+            if isinstance(extra.get("avaliacao_pagina"), (int, float))
+            else lot.reference_value
+        ),
         url=lot.url,
         updated_at=lot.updated_at,
     )

@@ -152,6 +152,13 @@ def _leiloeiro_ok(blob: str, page_text: str, source: str = "") -> Optional[bool]
     return False
 
 
+def _trecho_around(text: str, match: re.Match[str], pad: int = 50) -> str:
+    start = max(0, match.start() - pad)
+    end = min(len(text), match.end() + pad)
+    trecho = re.sub(r"\s+", " ", text[start:end]).strip()
+    return trecho[:180]
+
+
 def riscos_from_text(blob: str, page_text: str = "", source: str = "") -> dict[str, Any]:
     """Lê citação, usufruto, meação, CNJ e leiloeiro no texto público."""
     out: dict[str, Any] = {}
@@ -180,8 +187,14 @@ def riscos_from_text(blob: str, page_text: str = "", source: str = "") -> dict[s
     elif RE_CITADO_OK.search(blob):
         out["citacao"] = "citado"
 
+    mix = f"{blob}\n{page_text}"
     if RE_USUFRUTO.search(blob) and not RE_USUFRUTO_LIVRE.search(blob):
         out["usufruto"] = True
-    if RE_MEACAO.search(blob) or RE_MEACAO.search(page_text):
+        u = RE_USUFRUTO.search(blob)
+        if u:
+            out["usufruto_trecho"] = _trecho_around(blob, u)
+    meacao = RE_MEACAO.search(mix)
+    if meacao:
         out["meacao"] = True
+        out["meacao_trecho"] = _trecho_around(mix, meacao)
     return out

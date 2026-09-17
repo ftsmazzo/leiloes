@@ -239,12 +239,12 @@ def test_usufruto_e_meacao_limitam_score():
         title="Casa",
         current_bid=100000,
         reference_value=400000,
-        riscos={"meacao": True},
+        riscos={"meacao": True, "meacao_trecho": "Penhora da meação do executado sobre o imóvel"},
     )
     assert usufruto["score"] <= 28
     assert meacao["score"] <= 28
     assert any("usufruto" in m for m in usufruto["motivos"])
-    assert any("meação" in m.lower() or "cônjuge" in m for m in meacao["motivos"])
+    assert any("Penhora da meação" in m for m in meacao["motivos"])
 
 
 def test_citado_nao_aplica_teto():

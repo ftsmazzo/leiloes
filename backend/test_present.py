@@ -133,6 +133,26 @@ def test_lot_to_out_exposes_riscos_juridicos():
     assert out.riscos["citacao"] == "nao_citado"
 
 
+def test_lot_to_out_usa_preco_da_pagina():
+    lot = SimpleNamespace(
+        id=7,
+        auction_id=9,
+        external_id="28639",
+        title="Terreno Porto Ferreira",
+        description=None,
+        category="Terreno",
+        minimum_bid=7013110.10,
+        current_bid=7013110.10,
+        reference_value=7013110.10,
+        url=None,
+        raw_data='{"lance_pagina": 4207866.06, "avaliacao_pagina": 7013110.1}',
+        updated_at=datetime(2026, 9, 17),
+    )
+    out = lot_to_out(lot, "lance")
+    assert out.current_bid == 4207866.06
+    assert out.reference_value == 7013110.1
+
+
 if __name__ == "__main__":
     test_lot_to_out_exposes_source_and_cidade()
     test_registry_sources_are_catalog_tabs()
@@ -141,4 +161,5 @@ if __name__ == "__main__":
     test_lot_to_out_exposes_score_when_present()
     test_lot_to_out_score_absent_defaults_to_empty_motivos()
     test_lot_to_out_exposes_riscos_juridicos()
+    test_lot_to_out_usa_preco_da_pagina()
     print("ok")

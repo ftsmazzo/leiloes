@@ -31,6 +31,7 @@ KEEP_RAW_KEYS = (
     "edital_sem_texto",
     "docs_limitados",
     "lance_pagina",
+    "avaliacao_pagina",
     "riscos",
     "processo_cnj",
     "nao_entrar",

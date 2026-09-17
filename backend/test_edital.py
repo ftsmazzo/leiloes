@@ -265,6 +265,32 @@ def test_precos_from_page_separa_lance_e_avaliacao():
     assert precos["avaliacao_pagina"] == 51956.37
 
 
+def test_precos_from_html_grupo_lance_nao_usa_1a_praca():
+    html = (ROOT / "fixtures" / "lance_item.html").read_text(encoding="utf-8")
+    precos = precos_from_page(html=html)
+    assert precos["lance_pagina"] == 4207866.06
+    assert precos["avaliacao_pagina"] == 7013110.1
+
+
+def test_avaliar_lote_respeita_valor_atual_da_pagina():
+    html = (ROOT / "fixtures" / "lance_item.html").read_text(encoding="utf-8")
+    extra = avaliar_lote(
+        title="Terreno Porto Ferreira",
+        description=None,
+        url="https://www.grupolance.com.br/imoveis/terrenos/sp/porto-ferreira/x-28639",
+        current_bid=7013110.10,
+        minimum_bid=7013110.10,
+        reference_value=7013110.10,
+        extra={},
+        fetch_page=lambda _u: html,
+        fetch_file=lambda _u: b"%PDF-1.4 x",
+        write_ai=False,
+    )
+    assert extra["lance_pagina"] == 4207866.06
+    assert extra["avaliacao_edital"] == 7013110.1
+    assert extra["score"] > 50
+
+
 def test_parecer_diz_quando_faltou_documento_e_datajud():
     text = parecer_from_facts(
         {
@@ -347,6 +373,8 @@ if __name__ == "__main__":
     test_fields_from_text_le_riscos_do_edital()
     test_fracao_ideal_do_lote_nao_vira_meacao()
     test_precos_from_page_separa_lance_e_avaliacao()
+    test_precos_from_html_grupo_lance_nao_usa_1a_praca()
+    test_avaliar_lote_respeita_valor_atual_da_pagina()
     test_parecer_diz_quando_faltou_documento_e_datajud()
     test_avaliar_lote_consulta_datajud_injetado()
     print("ok")
