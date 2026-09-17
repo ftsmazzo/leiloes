@@ -11,6 +11,7 @@ from .database import Base
 class SourceEnum(str, Enum):
     CALIL = "calil"
     VEGAS = "vegas"
+    ZUK = "zuk"
 
 
 class AuctionModel(Base):

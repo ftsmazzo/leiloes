@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api", tags=["api"])
 
 @router.get("/auctions", response_model=list[AuctionOut])
 async def list_auctions(
-    source: Optional[str] = Query(None, description="Filtrar por fonte: calil, vegas"),
+    source: Optional[str] = Query(None, description="Filtrar por fonte: calil, vegas, zuk"),
     limit: int = Query(50, le=100),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -113,7 +113,7 @@ async def list_lots(
 
 @router.get("/sources")
 async def list_sources():
-    labels = {"calil": "Calil", "vegas": "Vegas", "demo": "Demo"}
+    labels = {"calil": "Calil", "vegas": "Vegas", "zuk": "Zuk", "demo": "Demo"}
     return [{"id": name, "label": labels.get(name, name.title())} for name in source_names()]
 
 
@@ -136,7 +136,7 @@ async def health():
 @router.post("/run-scrape")
 async def run_scrape():
     """
-    Dispara a execução de todos os scrapers (Calil, Vegas) e persiste no banco.
+    Dispara a execução de todos os scrapers registrados e persiste no banco.
     Use para validar o primeiro scrape ou atualizar dados manualmente.
     Pode demorar alguns segundos.
     """

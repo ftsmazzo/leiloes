@@ -3,10 +3,12 @@
 from app.scrapers.base import BaseScraper
 from app.scrapers.calil import CalilScraper
 from app.scrapers.vegas import VegasScraper
+from app.scrapers.zuk import ZukScraper
 
 SOURCES: list[type[BaseScraper]] = [
     CalilScraper,
     VegasScraper,
+    ZukScraper,
 ]
 
 
