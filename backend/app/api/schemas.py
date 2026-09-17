@@ -6,10 +6,13 @@ from pydantic import BaseModel
 
 class LotOut(BaseModel):
     id: int
+    auction_id: int
     external_id: str
+    source: str
     title: str
     description: Optional[str] = None
     category: Optional[str] = None
+    cidade: Optional[str] = None
     minimum_bid: Optional[float] = None
     current_bid: Optional[float] = None
     reference_value: Optional[float] = None
@@ -17,7 +20,7 @@ class LotOut(BaseModel):
     updated_at: datetime
 
     class Config:
-        from_attributes = True
+        from_attributes = False
 
 
 class AuctionOut(BaseModel):

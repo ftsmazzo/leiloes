@@ -7,7 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.database import get_db
 from app.models.schemas import AuctionModel, LotModel
 from app.api.schemas import AuctionOut, AuctionDetailOut, LotOut
+from app.api.present import lot_to_out
 from app.search import filter_lots
+from app.scrapers.registry import source_names
 
 router = APIRouter(prefix="/api", tags=["api"])
 
@@ -63,7 +65,7 @@ async def get_auction(auction_id: int, db: AsyncSession = Depends(get_db)):
         ends_at=auction.ends_at,
         lots_count=len(lots),
         updated_at=auction.updated_at,
-        lots=[LotOut.model_validate(l) for l in lots],
+        lots=[lot_to_out(lot, auction.source) for lot in lots],
     )
 
 
@@ -80,11 +82,15 @@ async def list_lots(
 ):
     cidade = cidade.strip() if cidade else None
     tipo = tipo.strip() if tipo else None
-    q = select(LotModel).order_by(LotModel.updated_at.desc())
+    q = (
+        select(LotModel, AuctionModel.source)
+        .join(AuctionModel, LotModel.auction_id == AuctionModel.id)
+        .order_by(LotModel.updated_at.desc())
+    )
     if auction_id:
         q = q.where(LotModel.auction_id == auction_id)
     if source:
-        q = q.join(AuctionModel, LotModel.auction_id == AuctionModel.id).where(AuctionModel.source == source)
+        q = q.where(AuctionModel.source == source)
     if teto is not None:
         q = q.where(
             or_(
@@ -96,11 +102,19 @@ async def list_lots(
     if not text_filter:
         q = q.limit(limit).offset(offset)
     result = await db.execute(q)
-    lots = list(result.scalars().all())
+    rows = list(result.all())
     if text_filter:
-        lots = filter_lots(lots, cidade=cidade, tipo=tipo)
-        lots = lots[offset : offset + limit]
-    return [LotOut.model_validate(lot) for lot in lots]
+        lots_only = [row[0] for row in rows]
+        kept_ids = {lot.id for lot in filter_lots(lots_only, cidade=cidade, tipo=tipo)}
+        rows = [row for row in rows if row[0].id in kept_ids]
+        rows = rows[offset : offset + limit]
+    return [lot_to_out(lot, src) for lot, src in rows]
+
+
+@router.get("/sources")
+async def list_sources():
+    labels = {"calil": "Calil", "vegas": "Vegas", "demo": "Demo"}
+    return [{"id": name, "label": labels.get(name, name.title())} for name in source_names()]
 
 
 @router.get("/stats")
