@@ -15,6 +15,8 @@ export type Lot = {
   matricula: string | null;
   area: string | null;
   foto: string | null;
+  valor_m2_regiao: number | null;
+  valor_mercado_estimado: number | null;
   current_bid: number | null;
   minimum_bid: number | null;
   reference_value: number | null;
@@ -70,6 +72,14 @@ export function LotCard({ lot }: { lot: Lot }) {
             <>
               <dt>Avaliação</dt>
               <dd>{formatMoney(lot.reference_value)}</dd>
+            </>
+          ) : null}
+          {lot.valor_mercado_estimado != null ? (
+            <>
+              <dt>Ref. mercado</dt>
+              <dd title={lot.valor_m2_regiao != null ? `${formatMoney(lot.valor_m2_regiao)}/m² na região` : undefined}>
+                {formatMoney(lot.valor_mercado_estimado)}
+              </dd>
             </>
           ) : null}
           {lot.matricula ? (

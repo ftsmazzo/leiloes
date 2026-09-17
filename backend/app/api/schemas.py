@@ -20,6 +20,8 @@ class LotOut(BaseModel):
     matricula: Optional[str] = None
     area: Optional[str] = None
     foto: Optional[str] = None
+    valor_m2_regiao: Optional[float] = None
+    valor_mercado_estimado: Optional[float] = None
     minimum_bid: Optional[float] = None
     current_bid: Optional[float] = None
     reference_value: Optional[float] = None
