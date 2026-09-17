@@ -5,6 +5,7 @@ Sem login. Parser coberto por fixture — CI não bate no site.
 from __future__ import annotations
 
 import re
+from datetime import datetime
 
 import httpx
 from bs4 import BeautifulSoup, Tag
@@ -18,12 +19,44 @@ from .listing import (
     href_of,
     origem_from_text,
     parse_br_currency,
+    parse_br_date,
     photo_bg,
     text_of,
     tipo_from_text,
 )
 
 RE_ID = re.compile(r"-(\d{4,6})$")
+
+
+def _active_praca_price(card: Tag, now: datetime | None = None) -> tuple[float | None, float | None]:
+    """Lê .card-dates (1ª/2ª/3ª praça, cada uma com início/fim/preço) e
+    retorna (preço da praça ativa agora, preço da 1ª praça como avaliação).
+
+    O Grupo Lance mostra o preço da 1ª praça em destaque (.card-price) mesmo
+    quando o lote já está na 2ª/3ª praça com lance bem menor — sem isso o
+    catálogo mostrava até 2x o valor que dá pra ofertar de verdade.
+    """
+    now = now or datetime.now()
+    rows = []
+    for row in card.select(".card-date-row"):
+        dates = row.select(".card-instance-date li")
+        if len(dates) < 3:
+            continue
+        start = parse_br_date(text_of(dates[0]))
+        price = parse_br_currency(text_of(dates[2]))
+        if start is None or price is None:
+            continue
+        rows.append((start, price))
+    if not rows:
+        return None, None
+    rows.sort(key=lambda r: r[0])
+    active = rows[0][1]
+    for start, price in rows:
+        if start <= now:
+            active = price
+    first = rows[0][1]
+    avaliacao = first if len(rows) > 1 and first != active else None
+    return active, avaliacao
 
 
 class LanceScraper(BaseScraper):
@@ -94,7 +127,9 @@ def _card_to_lot(card: Tag, base_url: str) -> ScrapedLot | None:
     title = str(title)[:512]
     local = text_of(card.select_one(".card-locality"))
     cidade = cidade_from_text(local, title)
-    price = parse_br_currency(text_of(card.select_one(".card-price")))
+    price, avaliacao = _active_praca_price(card)
+    if price is None:
+        price = parse_br_currency(text_of(card.select_one(".card-price")))
     origem = origem_from_text(
         text_of(card.select_one('a[href*="judiciais"]')),
         href,
@@ -110,6 +145,7 @@ def _card_to_lot(card: Tag, base_url: str) -> ScrapedLot | None:
         category=tipo,
         minimum_bid=price,
         current_bid=price,
+        reference_value=avaliacao,
         url=abs_url(base_url, href) if href else f"{base_url}/imoveis",
         raw_data=extra_lot(
             title=title,
