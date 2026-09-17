@@ -1,9 +1,9 @@
 """
 Classe base para scrapers de leilões.
-Cada site (Calil, Vegas, etc.) implementa um scraper que retorna dados normalizados.
+Cada site implementa um scraper e entra em registry.SOURCES.
 """
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
@@ -30,7 +30,7 @@ class ScrapedAuction:
     description: Optional[str] = None
     starts_at: Optional[datetime] = None
     ends_at: Optional[datetime] = None
-    lots: list[ScrapedLot]
+    lots: list[ScrapedLot] = field(default_factory=list)
 
 
 class BaseScraper(ABC):
