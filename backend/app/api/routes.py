@@ -12,6 +12,7 @@ from app.api.present import lot_to_out
 from app.search import cidade_of, filter_lots, score_sort_key, tipo_of
 from app.scrapers.registry import source_names
 from app.scrapers.extract import extract_status
+from app.alerts import alert_status
 
 router = APIRouter(prefix="/api", tags=["api"])
 
@@ -155,6 +156,7 @@ async def facets(db: AsyncSession = Depends(get_db)):
         "cidades": sorted(cidades.items(), key=lambda kv: (-kv[1], kv[0])),
         "tipos": sorted(tipos.items(), key=lambda kv: (-kv[1], kv[0])),
         "extract": extract_status(),
+        "alerts": alert_status(),
     }
 
 
@@ -183,12 +185,13 @@ async def stats(db: AsyncSession = Depends(get_db)):
         "total_auctions": r_auctions.scalar() or 0,
         "total_lots": r_lots.scalar() or 0,
         "extract": extract_status(),
+        "alerts": alert_status(),
     }
 
 
 @router.get("/health")
 async def health():
-    return {"status": "ok", "extract": extract_status()}
+    return {"status": "ok", "extract": extract_status(), "alerts": alert_status()}
 
 
 RUN_SCRAPE_COOLDOWN_S = 60.0

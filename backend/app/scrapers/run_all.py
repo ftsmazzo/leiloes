@@ -16,7 +16,40 @@ from app.scrapers.registry import all_scrapers
 from app.scrapers.extract import enrich_extra, extra_json
 from app.scrapers.market_price import estimate_market_value
 from app.scoring import compute_score
+from app.alerts import should_alert, format_alert_message
+from app.notify import send_telegram_alert, telegram_configured
 import json
+
+
+def _process_alerts(touched) -> int:
+    """Manda alerta pros lotes recem-persistidos que passam do score minimo
+    e ainda nao foram avisados. Best-effort: falha de envio nao propaga."""
+    if not telegram_configured():
+        return 0
+    sent = 0
+    for lot, source in touched:
+        extra = {}
+        if lot.raw_data:
+            try:
+                parsed = json.loads(lot.raw_data)
+                if isinstance(parsed, dict):
+                    extra = parsed
+            except json.JSONDecodeError:
+                extra = {}
+        if not should_alert(extra):
+            continue
+        message = format_alert_message(
+            title=lot.title,
+            source=source,
+            score=extra.get("score"),
+            motivos=extra.get("score_motivos") or [],
+            url=lot.url,
+        )
+        if send_telegram_alert(message):
+            extra["alertado"] = True
+            lot.raw_data = extra_json(extra)
+            sent += 1
+    return sent
 
 
 def _enrich_auctions(auctions, cap: int = 12) -> None:
@@ -64,7 +97,7 @@ async def run_all(on_progress=None):
         await conn.run_sync(Base.metadata.create_all)
 
     scrapers = all_scrapers()
-    summary = {"total_auctions": 0, "total_lots": 0, "by_source": {}, "errors": []}
+    summary = {"total_auctions": 0, "total_lots": 0, "by_source": {}, "errors": [], "alertas_enviados": 0}
 
     async with AsyncSessionLocal() as session:
         for scraper in scrapers:
@@ -77,7 +110,8 @@ async def run_all(on_progress=None):
                 summary["by_source"][scraper.source_name] = {"auctions": n_auctions, "lots": n_lots}
                 summary["total_auctions"] += n_auctions
                 summary["total_lots"] += n_lots
-                await session.run_sync(persist_auctions, auctions)
+                touched = await session.run_sync(persist_auctions, auctions)
+                summary["alertas_enviados"] += _process_alerts(touched)
                 await session.commit()
             except Exception as e:
                 await session.rollback()

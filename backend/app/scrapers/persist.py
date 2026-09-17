@@ -3,6 +3,7 @@ Grava leilões e lotes. Re-scrape atualiza lance/título; não duplica.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from sqlalchemy import select
@@ -10,6 +11,23 @@ from sqlalchemy.orm import Session
 
 from app.models.schemas import AuctionModel, LotModel
 from app.scrapers.base import ScrapedAuction, ScrapedLot
+
+
+def _merge_raw_data(existing_raw: str | None, new_raw: str) -> str:
+    """raw_data é recalculado do zero a cada scrape — preserva o flag
+    "alertado" do registro antigo, senão o alerta de oportunidade (#34)
+    reenviaria a cada rodada pro mesmo lote."""
+    if not existing_raw:
+        return new_raw
+    try:
+        old = json.loads(existing_raw)
+        new = json.loads(new_raw)
+    except json.JSONDecodeError:
+        return new_raw
+    if isinstance(old, dict) and isinstance(new, dict) and old.get("alertado"):
+        new["alertado"] = True
+        return json.dumps(new, ensure_ascii=False)
+    return new_raw
 
 
 def apply_lot(lot: LotModel, sl: ScrapedLot) -> None:
@@ -21,7 +39,7 @@ def apply_lot(lot: LotModel, sl: ScrapedLot) -> None:
     if sl.url is not None:
         lot.url = sl.url
     if sl.raw_data is not None:
-        lot.raw_data = sl.raw_data
+        lot.raw_data = _merge_raw_data(lot.raw_data, sl.raw_data)
     if sl.minimum_bid is not None:
         lot.minimum_bid = sl.minimum_bid
     if sl.current_bid is not None:
@@ -31,11 +49,14 @@ def apply_lot(lot: LotModel, sl: ScrapedLot) -> None:
     lot.updated_at = datetime.utcnow()
 
 
-def persist_auctions(session: Session, auctions: list[ScrapedAuction]) -> None:
+def persist_auctions(session: Session, auctions: list[ScrapedAuction]) -> list[tuple[LotModel, str]]:
+    touched: list[tuple[LotModel, str]] = []
     for sa in auctions:
         auction_id = _upsert_auction(session, sa)
         for sl in sa.lots:
-            _upsert_lot(session, auction_id, sl)
+            lot = _upsert_lot(session, auction_id, sl)
+            touched.append((lot, sa.source))
+    return touched
 
 
 def _upsert_auction(session: Session, sa: ScrapedAuction) -> int:
@@ -72,7 +93,7 @@ def _upsert_auction(session: Session, sa: ScrapedAuction) -> int:
     return existing.id
 
 
-def _upsert_lot(session: Session, auction_id: int, sl: ScrapedLot) -> None:
+def _upsert_lot(session: Session, auction_id: int, sl: ScrapedLot) -> LotModel:
     existing = session.execute(
         select(LotModel).where(
             LotModel.auction_id == auction_id,
@@ -93,5 +114,7 @@ def _upsert_lot(session: Session, auction_id: int, sl: ScrapedLot) -> None:
             raw_data=sl.raw_data,
         )
         session.add(lot)
-        return
+        session.flush()
+        return lot
     apply_lot(existing, sl)
+    return existing

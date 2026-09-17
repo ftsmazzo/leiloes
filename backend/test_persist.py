@@ -15,7 +15,7 @@ def _session() -> Session:
     return Session(engine)
 
 
-def _auction(bid: float, title: str = "Casa em Sertãozinho/SP") -> ScrapedAuction:
+def _auction(bid: float, title: str = "Casa em Sertãozinho/SP", raw_data: str = '{"cidade": "Sertãozinho"}') -> ScrapedAuction:
     return ScrapedAuction(
         external_id="calil-superbid-818",
         source="calil",
@@ -29,7 +29,7 @@ def _auction(bid: float, title: str = "Casa em Sertãozinho/SP") -> ScrapedAucti
                 minimum_bid=bid,
                 reference_value=320000,
                 url="https://example.test/oferta/818001",
-                raw_data='{"cidade": "Sertãozinho"}',
+                raw_data=raw_data,
             )
         ],
     )
@@ -85,7 +85,32 @@ def test_none_bid_does_not_wipe_previous():
     assert lot.raw_data and "Sertãozinho" in lot.raw_data
 
 
+def test_alertado_flag_survives_rescrape():
+    session = _session()
+    persist_auctions(session, [_auction(100000, "Casa antiga", raw_data='{"score": 80, "alertado": true}')])
+    session.commit()
+    # novo scrape recalcula score/raw_data do zero, sem saber que ja foi alertado
+    persist_auctions(session, [_auction(90000, "Casa atualizada", raw_data='{"score": 85}')])
+    session.commit()
+
+    lot = session.execute(select(LotModel)).scalar_one()
+    assert '"alertado": true' in lot.raw_data
+    assert '"score": 85' in lot.raw_data
+
+
+def test_persist_auctions_returns_touched_lots_with_source():
+    session = _session()
+    touched = persist_auctions(session, [_auction(100000)])
+    session.commit()
+    assert len(touched) == 1
+    lot, source = touched[0]
+    assert source == "calil"
+    assert lot.external_id == "818001"
+
+
 if __name__ == "__main__":
     test_rescrape_updates_bid_and_title_without_duplicate()
     test_none_bid_does_not_wipe_previous()
+    test_alertado_flag_survives_rescrape()
+    test_persist_auctions_returns_touched_lots_with_source()
     print("ok")
