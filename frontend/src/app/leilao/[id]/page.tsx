@@ -9,24 +9,20 @@ type Lot = {
   id: number;
   external_id: string;
   title: string;
-  description: string | null;
   category: string | null;
+  cidade: string | null;
   minimum_bid: number | null;
   current_bid: number | null;
   reference_value: number | null;
   url: string | null;
-  updated_at: string;
 };
 
 type AuctionDetail = {
   id: number;
-  external_id: string;
   source: string;
   title: string;
   url: string | null;
   description: string | null;
-  starts_at: string | null;
-  ends_at: string | null;
   lots_count: number;
   updated_at: string;
   lots: Lot[];
@@ -34,11 +30,20 @@ type AuctionDetail = {
 
 function formatMoney(value: number | null): string {
   if (value == null) return '—';
-  return new Intl.NumberFormat('pt-BR', {
-    style: 'currency',
-    currency: 'BRL',
-    maximumFractionDigits: 0,
-  }).format(value);
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(
+    value,
+  );
+}
+
+function httpUrl(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return url;
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 export default function LeilaoDetailPage() {
@@ -51,75 +56,88 @@ export default function LeilaoDetailPage() {
 
   useEffect(() => {
     if (!id) return;
-    fetch(`${API_URL}/api/auctions/${id}`)
+    const ac = new AbortController();
+    setLoading(true);
+    setData(null);
+    setError(null);
+    fetch(`${API_URL}/api/auctions/${id}`, { signal: ac.signal })
       .then((res) => {
         if (!res.ok) throw new Error('Leilão não encontrado');
         return res.json();
       })
       .then(setData)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (e instanceof Error && e.name === 'AbortError') return;
+        setError(e instanceof Error ? e.message : 'Falha ao carregar');
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setLoading(false);
+      });
+    return () => ac.abort();
   }, [id]);
 
-  if (loading) return <p>Carregando...</p>;
-  if (error) return <p style={{ color: 'crimson' }}>{error}</p>;
+  const site = httpUrl(data?.url ?? null);
+
+  if (loading) {
+    return (
+      <div aria-busy="true">
+        <p className="sr-only" aria-live="polite">
+          Carregando leilão
+        </p>
+        <div className="card skel" style={{ marginBottom: '1rem' }} />
+        <ul className="list">
+          <li className="card skel" />
+          <li className="card skel" />
+        </ul>
+      </div>
+    );
+  }
+  if (error) return <p className="msg msg-error">{error}</p>;
   if (!data) return null;
 
   return (
     <div>
       <p style={{ marginBottom: '1rem' }}>
-        <button
-          type="button"
-          onClick={() => router.back()}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#1a1a2e', textDecoration: 'underline' }}
-        >
+        <button type="button" className="btn-ghost" onClick={() => router.back()}>
           ← Voltar
         </button>
       </p>
-      <header style={{ marginBottom: '1.5rem', paddingBottom: '1rem', borderBottom: '1px solid #eee' }}>
-        <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: '#666' }}>{data.source}</span>
+      <header style={{ marginBottom: '1.5rem', paddingBottom: '1rem', borderBottom: '1px solid var(--line)' }}>
+        <span className="source-tag">{data.source}</span>
         <h1 style={{ margin: '0.25rem 0', fontSize: '1.5rem' }}>{data.title}</h1>
-        {data.description && <p style={{ margin: '0.5rem 0', color: '#555', fontSize: '0.9rem' }}>{data.description}</p>}
-        <p style={{ margin: 0, fontSize: '0.85rem', color: '#666' }}>
+        {data.description && <p className="meta">{data.description}</p>}
+        <p className="meta">
           {data.lots_count} lote(s) · Atualizado: {new Date(data.updated_at).toLocaleString('pt-BR')}
         </p>
-        {data.url && (
-          <a href={data.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.9rem', color: '#1a1a2e' }}>
+        {site && (
+          <a href={site} target="_blank" rel="noopener noreferrer">
             Ver no site original →
           </a>
         )}
       </header>
       <h2 style={{ fontSize: '1.1rem', marginBottom: '0.75rem' }}>Lotes</h2>
-      <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '1rem' }}>
-        {data.lots.map((lot) => (
-          <li
-            key={lot.id}
-            style={{
-              background: '#fff',
-              borderRadius: 8,
-              padding: '1rem',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-              border: '1px solid #eee',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
-              <strong>{lot.title}</strong>
-              <span style={{ fontSize: '0.85rem', color: '#666' }}>#{lot.external_id}</span>
-            </div>
-            <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: '#444', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-              {lot.current_bid != null && <span>Lance atual: {formatMoney(lot.current_bid)}</span>}
-              {lot.minimum_bid != null && lot.minimum_bid !== lot.current_bid && (
-                <span>Lance mín.: {formatMoney(lot.minimum_bid)}</span>
-              )}
-              {lot.reference_value != null && <span>Avaliação: {formatMoney(lot.reference_value)}</span>}
-            </div>
-            {lot.url && (
-              <a href={lot.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.85rem', marginTop: '0.5rem', display: 'inline-block' }}>
-                Ver detalhes no site →
-              </a>
-            )}
-          </li>
-        ))}
+      <ul className="list">
+        {data.lots.map((lot) => {
+          const lotSite = httpUrl(lot.url);
+          return (
+            <li key={lot.id} className="card">
+              <div className="card-head">
+                <strong>{lot.title}</strong>
+                <span>{formatMoney(lot.current_bid ?? lot.minimum_bid)}</span>
+              </div>
+              <div className="card-meta">
+                {lot.cidade && <span>{lot.cidade}</span>}
+                {lot.category && <span>{lot.category}</span>}
+                {lot.reference_value != null && <span>Avaliação: {formatMoney(lot.reference_value)}</span>}
+                {lotSite && (
+                  <a href={lotSite} target="_blank" rel="noopener noreferrer">
+                    Ver no site →
+                  </a>
+                )}
+              </div>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

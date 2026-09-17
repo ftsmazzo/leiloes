@@ -1,18 +1,23 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-type Auction = {
+type Source = { id: string; label: string };
+
+type Lot = {
   id: number;
+  auction_id: number;
   external_id: string;
   source: string;
   title: string;
+  category: string | null;
+  cidade: string | null;
+  current_bid: number | null;
+  minimum_bid: number | null;
   url: string | null;
-  lots_count: number;
-  updated_at: string;
 };
 
 type Stats = { total_auctions: number; total_lots: number } | null;
@@ -22,41 +27,90 @@ type ScrapeResult = {
   total_auctions: number;
   total_lots: number;
   by_source?: Record<string, { auctions: number; lots: number }>;
-  errors?: Array<{ source: string; error: string }>;
 };
 
+const DEMO: Source = { id: 'demo', label: 'Demo' };
+
+function formatMoney(value: number | null): string {
+  if (value == null) return '—';
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(value);
+}
+
+function httpUrl(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return url;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 export default function Home() {
-  const [auctions, setAuctions] = useState<Auction[]>([]);
+  const [sources, setSources] = useState<Source[]>([DEMO]);
+  const [source, setSource] = useState('');
+  const [cidade, setCidade] = useState('');
+  const [tipo, setTipo] = useState('');
+  const [teto, setTeto] = useState('');
+  const [applied, setApplied] = useState({ cidade: '', tipo: '', teto: '' });
+  const [lots, setLots] = useState<Lot[]>([]);
   const [stats, setStats] = useState<Stats>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [source, setSource] = useState<string>('');
+  const [reloadToken, setReloadToken] = useState(0);
   const [scrapeLoading, setScrapeLoading] = useState(false);
   const [scrapeResult, setScrapeResult] = useState<ScrapeResult | null>(null);
   const [scrapeError, setScrapeError] = useState<string | null>(null);
 
+  const tabs: Source[] = [{ id: '', label: 'Todas' }, ...sources.filter((s) => s.id !== 'demo'), DEMO];
+
   useEffect(() => {
+    const ac = new AbortController();
+    fetch(`${API_URL}/api/sources`, { signal: ac.signal })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: Source[]) => {
+        if (Array.isArray(data) && data.length) setSources(data);
+      })
+      .catch((e) => {
+        if (e instanceof Error && e.name === 'AbortError') return;
+      });
+    return () => ac.abort();
+  }, []);
+
+  useEffect(() => {
+    const ac = new AbortController();
+    setLoading(true);
     const params = new URLSearchParams();
     if (source) params.set('source', source);
+    if (applied.cidade) params.set('cidade', applied.cidade);
+    if (applied.tipo) params.set('tipo', applied.tipo);
+    if (applied.teto) params.set('teto', applied.teto);
     Promise.all([
-      fetch(`${API_URL}/api/auctions?${params}`).then((r) => (r.ok ? r.json() : Promise.reject(new Error('Falha ao carregar')))),
-      fetch(`${API_URL}/api/stats`).then((r) => (r.ok ? r.json() : null)),
+      fetch(`${API_URL}/api/lots?${params}`, { signal: ac.signal }),
+      fetch(`${API_URL}/api/stats`, { signal: ac.signal }),
     ])
-      .then(([data, statsData]) => {
-        setAuctions(data);
-        setStats(statsData);
+      .then(async ([lotsRes, statsRes]) => {
+        if (!lotsRes.ok) throw new Error('Falha ao carregar lotes');
+        setLots(await lotsRes.json());
+        setStats(statsRes.ok ? await statsRes.json() : null);
         setError(null);
       })
-      .catch((e) => setError(e.message === 'Failed to fetch' ? 'Não foi possível conectar ao backend. Verifique NEXT_PUBLIC_API_URL (URL pública do backend).' : e.message))
-      .finally(() => setLoading(false));
-  }, [source]);
+      .catch((e) => {
+        if (e instanceof Error && e.name === 'AbortError') return;
+        const msg = e instanceof Error ? e.message : 'Falha ao carregar';
+        setError(msg === 'Failed to fetch' ? 'Não foi possível conectar ao backend. Verifique NEXT_PUBLIC_API_URL.' : msg);
+        setLots([]);
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setLoading(false);
+      });
+    return () => ac.abort();
+  }, [source, applied, reloadToken]);
 
-  const formatDate = (s: string) => {
-    try {
-      return new Date(s).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
-    } catch {
-      return s;
-    }
+  const onSearch = (e: FormEvent) => {
+    e.preventDefault();
+    setApplied({ cidade: cidade.trim(), tipo, teto: teto.trim() });
   };
 
   const runScrape = async () => {
@@ -64,133 +118,141 @@ export default function Home() {
     setScrapeResult(null);
     setScrapeError(null);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120_000); // 2 min para o scrape
+    const timeoutId = setTimeout(() => controller.abort(), 120_000);
     try {
       const res = await fetch(`${API_URL}/api/run-scrape`, { method: 'POST', signal: controller.signal });
       clearTimeout(timeoutId);
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Falha ao rodar scrape');
       setScrapeResult(data);
-      setLoading(true);
-      const [auctionsData, statsData] = await Promise.all([
-        fetch(`${API_URL}/api/auctions${source ? `?source=${source}` : ''}`).then((r) => (r.ok ? r.json() : [])),
-        fetch(`${API_URL}/api/stats`).then((r) => (r.ok ? r.json() : null)),
-      ]);
-      setAuctions(auctionsData);
-      setStats(statsData);
+      setReloadToken((n) => n + 1);
     } catch (e) {
       clearTimeout(timeoutId);
       if (e instanceof Error) {
         if (e.name === 'AbortError') setScrapeError('Scrape demorou mais de 2 minutos. Tente de novo.');
-        else if (e.message === 'Failed to fetch') setScrapeError('Não foi possível conectar ao backend. Verifique se a URL da API (NEXT_PUBLIC_API_URL) é a URL pública do backend e está acessível.');
-        else setScrapeError(e.message);
+        else if (e.message === 'Failed to fetch') {
+          setScrapeError('Não foi possível conectar ao backend. Verifique se NEXT_PUBLIC_API_URL é a URL pública da API.');
+        } else setScrapeError(e.message);
       } else setScrapeError('Erro ao rodar scrape');
     } finally {
       setScrapeLoading(false);
-      setLoading(false);
     }
   };
 
+  const emptyHint =
+    source === 'demo'
+      ? 'A base demo ainda não tem lotes persistidos. Calil e Vegas entram pelo scrape.'
+      : 'Nenhum lote nesta base com esses filtros. Rode o scrape ou altere cidade, tipo e teto.';
+
   return (
-    <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <span>Fonte:</span>
-          <select
-            value={source}
-            onChange={(e) => setSource(e.target.value)}
-            style={{ padding: '0.5rem 0.75rem', borderRadius: 6, border: '1px solid #ccc' }}
+    <div aria-busy={loading}>
+      <div className="tabs" role="group" aria-label="Base de leilão">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id || 'all'}
+            type="button"
+            className="tab"
+            aria-pressed={source === tab.id}
+            onClick={() => setSource(tab.id)}
           >
-            <option value="">Todas</option>
-            <option value="calil">Calil</option>
-            <option value="vegas">Vegas</option>
-          </select>
-        </label>
-        <button
-          type="button"
-          onClick={runScrape}
-          disabled={scrapeLoading}
-          style={{
-            padding: '0.5rem 1rem',
-            borderRadius: 6,
-            border: '1px solid #1a1a2e',
-            background: scrapeLoading ? '#ccc' : '#1a1a2e',
-            color: '#fff',
-            fontWeight: 600,
-            cursor: scrapeLoading ? 'not-allowed' : 'pointer',
-          }}
-        >
-          {scrapeLoading ? 'Rodando scrape...' : 'Rodar scrape agora'}
-        </button>
-        <a href={`${API_URL}/docs`} target="_blank" rel="noopener noreferrer" style={{ color: '#1a1a2e', fontSize: '0.9rem' }}>
-          API Docs →
-        </a>
+            {tab.label}
+          </button>
+        ))}
       </div>
 
-      {scrapeError && <p style={{ color: 'crimson', marginBottom: '1rem' }}>{scrapeError}</p>}
+      <form className="toolbar" onSubmit={onSearch}>
+        <label className="field">
+          Cidade
+          <input value={cidade} onChange={(e) => setCidade(e.target.value)} placeholder="Sertãozinho" />
+        </label>
+        <label className="field">
+          Tipo
+          <select value={tipo} onChange={(e) => setTipo(e.target.value)}>
+            <option value="">Todos</option>
+            <option value="casa">Casa</option>
+            <option value="apartamento">Apartamento</option>
+            <option value="terreno">Terreno</option>
+            <option value="imovel">Imóvel</option>
+          </select>
+        </label>
+        <label className="field">
+          Teto (R$)
+          <input value={teto} onChange={(e) => setTeto(e.target.value)} inputMode="numeric" placeholder="300000" />
+        </label>
+        <button className="btn" type="submit">
+          Buscar
+        </button>
+        <button className="btn" type="button" onClick={runScrape} disabled={scrapeLoading} aria-busy={scrapeLoading}>
+          {scrapeLoading ? 'Rodando scrape…' : 'Rodar scrape'}
+        </button>
+      </form>
+
+      {scrapeError && <p className="msg msg-error">{scrapeError}</p>}
       {scrapeResult && (
-        <p style={{ marginBottom: '1rem', padding: '0.75rem 1rem', background: '#e8f5e9', borderRadius: 8, color: '#1b5e20' }}>
-          Scrape concluído: <strong>{scrapeResult.total_auctions}</strong> leilão(ões), <strong>{scrapeResult.total_lots}</strong> lote(s).
-          {scrapeResult.by_source && Object.entries(scrapeResult.by_source).map(([name, v]) => (
-            <span key={name} style={{ marginLeft: '0.5rem' }}> {name}: {v.auctions}/{v.lots}</span>
-          ))}
+        <p className="msg msg-ok">
+          Scrape concluído: <strong>{scrapeResult.total_auctions}</strong> leilão(ões),{' '}
+          <strong>{scrapeResult.total_lots}</strong> lote(s)
+          {scrapeResult.by_source &&
+            Object.entries(scrapeResult.by_source).map(([name, v]) => (
+              <span key={name}>
+                {' '}
+                · {name}: {v.lots} lote(s)
+              </span>
+            ))}
         </p>
       )}
 
-      {loading && <p>Carregando leilões...</p>}
-      {error && <p style={{ color: 'crimson' }}>{error}</p>}
-
-      {!loading && !error && auctions.length === 0 && (
-        <p style={{ color: '#666' }}>
-          Nenhum leilão no banco. Use o botão <strong>Rodar scrape agora</strong> acima para buscar leilões (Calil e Vegas).
-        </p>
-      )}
-
+      {error && <p className="msg msg-error">{error}</p>}
       {!loading && stats && (
-        <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '1rem' }}>
-          <strong>{stats.total_auctions}</strong> leilão(ões) · <strong>{stats.total_lots}</strong> lote(s) no banco
+        <p className="meta">
+          <strong>{stats.total_lots}</strong> lote(s) no banco · <strong>{stats.total_auctions}</strong> leilão(ões)
         </p>
       )}
 
-      {!loading && !error && auctions.length > 0 && (
-        <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '1rem' }}>
-          {auctions.map((a) => (
-            <li
-              key={a.id}
-              style={{
-                background: '#fff',
-                borderRadius: 8,
-                padding: '1rem 1.25rem',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-                border: '1px solid #eee',
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
-                <div>
-                  <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: '#666', marginRight: '0.5rem' }}>
-                    {a.source}
-                  </span>
-                  <strong>{a.title}</strong>
+      {loading && (
+        <div>
+          <p className="sr-only" aria-live="polite">
+            Carregando lotes
+          </p>
+          <ul className="list">
+            <li className="card skel" />
+            <li className="card skel" />
+            <li className="card skel" />
+            <li className="card skel" />
+          </ul>
+        </div>
+      )}
+
+      {!loading && !error && lots.length === 0 && <p className="meta">{emptyHint}</p>}
+
+      {!loading && !error && lots.length > 0 && (
+        <ul className="list">
+          {lots.map((lot) => {
+            const site = httpUrl(lot.url);
+            return (
+              <li key={lot.id} className="card">
+                <div className="card-head">
+                  <div>
+                    <span className="source-tag">{lot.source}</span>
+                    <strong>{lot.title}</strong>
+                  </div>
+                  <span>{formatMoney(lot.current_bid ?? lot.minimum_bid)}</span>
                 </div>
-                <span style={{ fontSize: '0.85rem', color: '#666' }}>{a.lots_count} lote(s)</span>
-              </div>
-              <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#666', display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
-                <span>Atualizado: {formatDate(a.updated_at)}</span>
-                {a.lots_count > 0 && (
-                  <Link href={`/leilao/${a.id}`} style={{ color: '#1a1a2e', fontWeight: 500 }}>
-                    Ver lotes →
-                  </Link>
-                )}
-                {a.url && (
-                  <a href={a.url} target="_blank" rel="noopener noreferrer" style={{ color: '#1a1a2e' }}>
-                    Ver no site
-                  </a>
-                )}
-              </div>
-            </li>
-          ))}
+                <div className="card-meta">
+                  {lot.cidade && <span>{lot.cidade}</span>}
+                  {lot.category && <span>{lot.category}</span>}
+                  <Link href={`/leilao/${lot.auction_id}`}>Ver leilão →</Link>
+                  {site && (
+                    <a href={site} target="_blank" rel="noopener noreferrer">
+                      Ver no site
+                    </a>
+                  )}
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
-    </>
+    </div>
   );
 }
