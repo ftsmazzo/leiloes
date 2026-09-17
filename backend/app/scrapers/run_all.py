@@ -13,6 +13,28 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from app.models.database import Base, engine, AsyncSessionLocal
 from app.scrapers.persist import persist_auctions
 from app.scrapers.registry import all_scrapers
+from app.scrapers.extract import enrich_extra, extra_json
+import json
+
+
+def _enrich_auctions(auctions, cap: int = 12) -> None:
+    used = 0
+    for auction in auctions:
+        for lot in auction.lots:
+            extra = {}
+            if lot.raw_data:
+                try:
+                    parsed = json.loads(lot.raw_data)
+                    if isinstance(parsed, dict):
+                        extra = parsed
+                except json.JSONDecodeError:
+                    extra = {}
+            filled = enrich_extra(lot.title, lot.description, extra, use_ai=used < cap)
+            if filled.get("extract") in ("gliner", "mistral"):
+                used += 1
+            lot.raw_data = extra_json(filled)
+            if filled.get("tipo") and not lot.category:
+                lot.category = str(filled["tipo"])
 
 
 async def run_all():
@@ -30,6 +52,7 @@ async def run_all():
                 auctions = await scraper.scrape()
                 n_auctions, n_lots = len(auctions), sum(len(a.lots) for a in auctions)
                 print(f"  -> {n_auctions} leilão(ões), {n_lots} lote(s)")
+                _enrich_auctions(auctions)
                 summary["by_source"][scraper.source_name] = {"auctions": n_auctions, "lots": n_lots}
                 summary["total_auctions"] += n_auctions
                 summary["total_lots"] += n_lots

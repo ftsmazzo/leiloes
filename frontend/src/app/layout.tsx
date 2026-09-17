@@ -1,8 +1,8 @@
 import './globals.css';
 
 export const metadata = {
-  title: 'Leilões Dashboard',
-  description: 'Catálogo de lotes — Calil, Vegas e mais',
+  title: 'Leilões · Catálogo',
+  description: 'Cards de lote Calil e Vegas com cidade, endereço, tipo e lance',
 };
 
 export default function RootLayout({
@@ -15,7 +15,7 @@ export default function RootLayout({
       <body>
         <header className="site-header">
           <p className="brand">Leilões</p>
-          <p>Catálogo por base — Calil, Vegas, Zuk, Mega, Grupo Lance e demo</p>
+          <p>Catálogo de trabalho — Calil, Vegas, Zuk, Mega e Grupo Lance</p>
         </header>
         <main className="site-main">{children}</main>
       </body>

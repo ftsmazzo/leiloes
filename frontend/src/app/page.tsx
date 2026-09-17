@@ -1,61 +1,39 @@
 'use client';
 
-import Link from 'next/link';
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { Lot, LotCard } from '../components/LotCard';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8050';
 
 type Source = { id: string; label: string };
 
-type Lot = {
-  id: number;
-  auction_id: number;
-  external_id: string;
-  source: string;
-  title: string;
-  category: string | null;
-  cidade: string | null;
-  current_bid: number | null;
-  minimum_bid: number | null;
-  url: string | null;
+type Facets = {
+  total_lots: number;
+  with_cidade: number;
+  by_source: Record<string, number>;
+  cidades: [string, number][];
+  tipos: [string, number][];
+  extract?: { gliner: boolean; openrouter: boolean; extract_model: string };
 };
-
-type Stats = { total_auctions: number; total_lots: number } | null;
 
 type ScrapeResult = {
   status: string;
   total_auctions: number;
   total_lots: number;
   by_source?: Record<string, { auctions: number; lots: number }>;
+  errors?: { source: string; error: string }[];
 };
 
-const DEMO: Source = { id: 'demo', label: 'Demo' };
-
-function formatMoney(value: number | null): string {
-  if (value == null) return '—';
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(value);
-}
-
-function httpUrl(url: string | null): string | null {
-  if (!url) return null;
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return url;
-  } catch {
-    return null;
-  }
-  return null;
-}
-
 export default function Home() {
-  const [sources, setSources] = useState<Source[]>([DEMO]);
+  const [sources, setSources] = useState<Source[]>([]);
   const [source, setSource] = useState('');
   const [cidade, setCidade] = useState('');
-  const [tipo, setTipo] = useState('');
+  const [tipo, setTipo] = useState('imovel');
   const [teto, setTeto] = useState('');
-  const [applied, setApplied] = useState({ cidade: '', tipo: '', teto: '' });
+  const [q, setQ] = useState('');
+  const [applied, setApplied] = useState({ cidade: '', tipo: 'imovel', teto: '', q: '' });
   const [lots, setLots] = useState<Lot[]>([]);
-  const [stats, setStats] = useState<Stats>(null);
+  const [facets, setFacets] = useState<Facets | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
@@ -63,7 +41,8 @@ export default function Home() {
   const [scrapeResult, setScrapeResult] = useState<ScrapeResult | null>(null);
   const [scrapeError, setScrapeError] = useState<string | null>(null);
 
-  const tabs: Source[] = [{ id: '', label: 'Todas' }, ...sources.filter((s) => s.id !== 'demo'), DEMO];
+  const tabs: Source[] = [{ id: '', label: 'Todas' }, ...sources];
+  const cityOptions = useMemo(() => facets?.cidades ?? [], [facets]);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -86,20 +65,22 @@ export default function Home() {
     if (applied.cidade) params.set('cidade', applied.cidade);
     if (applied.tipo) params.set('tipo', applied.tipo);
     if (applied.teto) params.set('teto', applied.teto);
+    if (applied.q) params.set('q', applied.q);
+    params.set('limit', '80');
     Promise.all([
       fetch(`${API_URL}/api/lots?${params}`, { signal: ac.signal }),
-      fetch(`${API_URL}/api/stats`, { signal: ac.signal }),
+      fetch(`${API_URL}/api/facets`, { signal: ac.signal }),
     ])
-      .then(async ([lotsRes, statsRes]) => {
+      .then(async ([lotsRes, facetsRes]) => {
         if (!lotsRes.ok) throw new Error('Falha ao carregar lotes');
         setLots(await lotsRes.json());
-        setStats(statsRes.ok ? await statsRes.json() : null);
+        setFacets(facetsRes.ok ? await facetsRes.json() : null);
         setError(null);
       })
       .catch((e) => {
         if (e instanceof Error && e.name === 'AbortError') return;
         const msg = e instanceof Error ? e.message : 'Falha ao carregar';
-        setError(msg === 'Failed to fetch' ? 'Não foi possível conectar ao backend. Verifique NEXT_PUBLIC_API_URL.' : msg);
+        setError(msg === 'Failed to fetch' ? 'Não foi possível conectar à API em 127.0.0.1:8050.' : msg);
         setLots([]);
       })
       .finally(() => {
@@ -110,7 +91,7 @@ export default function Home() {
 
   const onSearch = (e: FormEvent) => {
     e.preventDefault();
-    setApplied({ cidade: cidade.trim(), tipo, teto: teto.trim() });
+    setApplied({ cidade: cidade.trim(), tipo, teto: teto.trim(), q: q.trim() });
   };
 
   const runScrape = async () => {
@@ -118,7 +99,7 @@ export default function Home() {
     setScrapeResult(null);
     setScrapeError(null);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120_000);
+    const timeoutId = setTimeout(() => controller.abort(), 180_000);
     try {
       const res = await fetch(`${API_URL}/api/run-scrape`, { method: 'POST', signal: controller.signal });
       clearTimeout(timeoutId);
@@ -129,9 +110,9 @@ export default function Home() {
     } catch (e) {
       clearTimeout(timeoutId);
       if (e instanceof Error) {
-        if (e.name === 'AbortError') setScrapeError('Scrape demorou mais de 2 minutos. Tente de novo.');
+        if (e.name === 'AbortError') setScrapeError('Scrape demorou mais de 3 minutos. Tente de novo.');
         else if (e.message === 'Failed to fetch') {
-          setScrapeError('Não foi possível conectar ao backend. Verifique se NEXT_PUBLIC_API_URL é a URL pública da API.');
+          setScrapeError('API fora. Suba o backend em 127.0.0.1:8050.');
         } else setScrapeError(e.message);
       } else setScrapeError('Erro ao rodar scrape');
     } finally {
@@ -139,40 +120,76 @@ export default function Home() {
     }
   };
 
-  const emptyHint =
-    source === 'demo'
-      ? 'A base demo ainda não tem lotes persistidos. As outras bases entram pelo scrape.'
-      : 'Nenhum lote nesta base com esses filtros. Rode o scrape ou altere cidade, tipo e teto.';
+  const sourceCounts = Object.entries(facets?.by_source ?? {});
 
   return (
     <div aria-busy={loading}>
+      <section className="kpis" aria-label="Resumo do catálogo">
+        {sourceCounts.map(([name, count]) => (
+          <div className="kpi" key={name}>
+            <span>{name}</span>
+            <strong>{count}</strong>
+          </div>
+        ))}
+        <div className="kpi">
+          <span>Com cidade</span>
+          <strong>{facets ? `${facets.with_cidade}/${facets.total_lots}` : '—'}</strong>
+        </div>
+        <div className="kpi">
+          <span>Extração</span>
+          <strong>
+            {facets?.extract?.gliner ? 'GLiNER' : 'regex'}
+            {facets?.extract?.openrouter ? ' + Mistral' : ''}
+          </strong>
+        </div>
+      </section>
+
       <div className="tabs" role="group" aria-label="Base de leilão">
         {tabs.map((tab) => (
           <button
             key={tab.id || 'all'}
             type="button"
             className="tab"
-            aria-pressed={source === tab.id}
+            aria-selected={source === tab.id}
             onClick={() => setSource(tab.id)}
           >
             {tab.label}
+            {tab.id && facets?.by_source?.[tab.id] != null ? ` (${facets.by_source[tab.id]})` : ''}
           </button>
         ))}
       </div>
 
       <form className="toolbar" onSubmit={onSearch}>
         <label className="field">
+          Busca
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="rua, bairro, matrícula…" />
+        </label>
+        <label className="field">
           Cidade
-          <input value={cidade} onChange={(e) => setCidade(e.target.value)} placeholder="Sertãozinho" />
+          <input
+            value={cidade}
+            onChange={(e) => setCidade(e.target.value)}
+            placeholder="Ribeirão Preto"
+            list="cidades"
+          />
+          <datalist id="cidades">
+            {cityOptions.map(([name]) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
         </label>
         <label className="field">
           Tipo
           <select value={tipo} onChange={(e) => setTipo(e.target.value)}>
             <option value="">Todos</option>
+            <option value="imovel">Imóvel (casa/apto/terreno)</option>
             <option value="casa">Casa</option>
             <option value="apartamento">Apartamento</option>
             <option value="terreno">Terreno</option>
-            <option value="imovel">Imóvel</option>
+            <option value="galpao">Galpão</option>
+            <option value="chacara">Chácara</option>
+            <option value="sala">Sala comercial</option>
+            <option value="veiculo">Veículo</option>
           </select>
         </label>
         <label className="field">
@@ -182,76 +199,59 @@ export default function Home() {
         <button className="btn" type="submit">
           Buscar
         </button>
-        <button className="btn" type="button" onClick={runScrape} disabled={scrapeLoading} aria-busy={scrapeLoading}>
-          {scrapeLoading ? 'Rodando scrape…' : 'Rodar scrape'}
+        <button className="btn btn-secondary" type="button" onClick={runScrape} disabled={scrapeLoading} aria-busy={scrapeLoading}>
+          {scrapeLoading ? 'Atualizando catálogo…' : 'Atualizar catálogo'}
         </button>
       </form>
 
       {scrapeError && <p className="msg msg-error">{scrapeError}</p>}
       {scrapeResult && (
         <p className="msg msg-ok">
-          Scrape concluído: <strong>{scrapeResult.total_auctions}</strong> leilão(ões),{' '}
-          <strong>{scrapeResult.total_lots}</strong> lote(s)
+          Catálogo atualizado: <strong>{scrapeResult.total_lots}</strong> lote(s)
           {scrapeResult.by_source &&
             Object.entries(scrapeResult.by_source).map(([name, v]) => (
               <span key={name}>
                 {' '}
-                · {name}: {v.lots} lote(s)
+                · {name}: {v.lots}
               </span>
             ))}
+          {scrapeResult.errors && scrapeResult.errors.length > 0 && (
+            <span> · falha: {scrapeResult.errors.map((e) => e.source).join(', ')}</span>
+          )}
         </p>
       )}
 
       {error && <p className="msg msg-error">{error}</p>}
-      {!loading && stats && (
-        <p className="meta">
-          <strong>{stats.total_lots}</strong> lote(s) no banco · <strong>{stats.total_auctions}</strong> leilão(ões)
-        </p>
-      )}
 
       {loading && (
         <div>
           <p className="sr-only" aria-live="polite">
             Carregando lotes
           </p>
-          <ul className="list">
-            <li className="card skel" />
-            <li className="card skel" />
-            <li className="card skel" />
-            <li className="card skel" />
-          </ul>
+          <div className="lot-grid">
+            <div className="lot-card skel" />
+            <div className="lot-card skel" />
+            <div className="lot-card skel" />
+            <div className="lot-card skel" />
+            <div className="lot-card skel" />
+            <div className="lot-card skel" />
+          </div>
         </div>
       )}
 
-      {!loading && !error && lots.length === 0 && <p className="meta">{emptyHint}</p>}
+      {!loading && !error && lots.length === 0 && (
+        <p className="meta">
+          Nenhum lote com esses filtros. Clique em <strong>Atualizar catálogo</strong> para puxar Calil
+          (calilleiloes.com.br), Vegas, Zuk, Mega e Grupo Lance, ou limpe cidade/tipo.
+        </p>
+      )}
 
       {!loading && !error && lots.length > 0 && (
-        <ul className="list">
-          {lots.map((lot) => {
-            const site = httpUrl(lot.url);
-            return (
-              <li key={lot.id} className="card">
-                <div className="card-head">
-                  <div>
-                    <span className="source-tag">{lot.source}</span>
-                    <strong>{lot.title}</strong>
-                  </div>
-                  <span>{formatMoney(lot.current_bid ?? lot.minimum_bid)}</span>
-                </div>
-                <div className="card-meta">
-                  {lot.cidade && <span>{lot.cidade}</span>}
-                  {lot.category && <span>{lot.category}</span>}
-                  <Link href={`/leilao/${lot.auction_id}`}>Ver leilão →</Link>
-                  {site && (
-                    <a href={site} target="_blank" rel="noopener noreferrer">
-                      Ver no site
-                    </a>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+        <div className="lot-grid">
+          {lots.map((lot) => (
+            <LotCard key={lot.id} lot={lot} />
+          ))}
+        </div>
       )}
     </div>
   );
