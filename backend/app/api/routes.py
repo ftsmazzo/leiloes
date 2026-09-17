@@ -1,6 +1,7 @@
+import time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -183,12 +184,37 @@ async def health():
     return {"status": "ok", "extract": extract_status()}
 
 
+RUN_SCRAPE_COOLDOWN_S = 60.0
+_scrape_running = False
+_scrape_last_finished: float | None = None
+
+
 @router.post("/run-scrape")
 async def run_scrape():
     """
-    Dispara a execução de todos os scrapers (Calil, Vegas) e persiste no banco.
-    Use para validar o primeiro scrape ou atualizar dados manualmente.
+    Dispara a execução de todos os scrapers registrados (Calil, Vegas, Zuk, Mega,
+    Grupo Lance) e persiste no banco. Use para validar o primeiro scrape ou
+    atualizar dados manualmente. Limitado a uma execução por vez, com intervalo
+    mínimo entre rodadas, pois cada chamada bate nos sites de origem.
     """
-    from app.scrapers.run_all import run_all
-    summary = await run_all()
-    return {"status": "ok", **summary}
+    global _scrape_running, _scrape_last_finished
+    if _scrape_running:
+        raise HTTPException(status_code=429, detail="Já existe um scrape em andamento. Aguarde terminar.")
+    if _scrape_last_finished is not None:
+        elapsed = time.monotonic() - _scrape_last_finished
+        if elapsed < RUN_SCRAPE_COOLDOWN_S:
+            retry_after = int(RUN_SCRAPE_COOLDOWN_S - elapsed) + 1
+            raise HTTPException(
+                status_code=429,
+                detail=f"Aguarde {retry_after}s antes de rodar o scrape de novo.",
+                headers={"Retry-After": str(retry_after)},
+            )
+    _scrape_running = True
+    try:
+        from app.scrapers.run_all import run_all
+
+        summary = await run_all()
+        return {"status": "ok", **summary}
+    finally:
+        _scrape_running = False
+        _scrape_last_finished = time.monotonic()
