@@ -1,12 +1,27 @@
 """Campos comuns dos scrapers de listagem pública (sem GLiNER)."""
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
 from urllib.parse import urljoin
 
 from bs4 import Tag
+
+from .extract import cidade_from_text, extra_json, parse_br_currency, tipo_from_text
+
+__all__ = [
+    "HEADERS",
+    "cidade_from_text",
+    "parse_br_currency",
+    "tipo_from_text",
+    "extra_json",
+    "href_of",
+    "abs_url",
+    "photo_bg",
+    "extra_lot",
+    "text_of",
+    "origem_from_text",
+]
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0",
@@ -15,55 +30,6 @@ HEADERS = {
 }
 
 RE_BG = re.compile(r"url\((['\"]?)([^)'\"]+)\1\)", re.I)
-
-TIPO_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("veiculo", re.compile(r"\bve[ií]culo|\bmoto(?:cicleta)?\b|\bcarro\b", re.I)),
-    ("apartamento", re.compile(r"\bapartament|\bapto\b", re.I)),
-    ("casa", re.compile(r"\bcasa\b|\bsobrado\b|\bed[ií]cula\b", re.I)),
-    ("terreno", re.compile(r"\bterreno\b|\b[aá]rea de terras\b|\bfazenda\b", re.I)),
-    ("galpao", re.compile(r"\bgalp[aã]o\b", re.I)),
-    ("chacara", re.compile(r"\bch[aá]cara\b", re.I)),
-    ("imovel", re.compile(r"\bim[oó]ve", re.I)),
-]
-
-
-def parse_br_currency(s: str) -> float | None:
-    if not s:
-        return None
-    cleaned = re.sub(r"[^\d,.-]", "", str(s))
-    if not cleaned:
-        return None
-    cleaned = cleaned.replace(".", "").replace(",", ".")
-    try:
-        return float(cleaned)
-    except ValueError:
-        return None
-
-
-def tipo_from_text(*parts: Any) -> str | None:
-    blob = " ".join(str(p) for p in parts if p)
-    if not blob:
-        return None
-    for name, pattern in TIPO_PATTERNS:
-        if pattern.search(blob):
-            return name
-    return None
-
-
-def cidade_from_text(*parts: Any) -> str | None:
-    for part in parts:
-        text = str(part).strip() if part else ""
-        if not text:
-            continue
-        if "," in text:
-            name = text.split(",")[0].strip()
-            if 2 < len(name) <= 40:
-                return name
-        if "/" in text:
-            name = text.split("/")[0].strip()
-            if 2 < len(name) <= 40:
-                return name
-    return None
 
 
 def href_of(tag: Tag | None) -> str:
@@ -101,13 +67,6 @@ def photo_bg(tag: Tag | None) -> str | None:
             if url.startswith("http"):
                 return url
     return None
-
-
-def extra_json(extra: dict[str, Any]) -> str | None:
-    clean = {k: v for k, v in extra.items() if v not in (None, "", [], {})}
-    if not clean:
-        return None
-    return json.dumps(clean, ensure_ascii=False)
 
 
 def extra_lot(
