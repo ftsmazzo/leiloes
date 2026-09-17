@@ -2,6 +2,7 @@ from pathlib import Path
 
 from app.edital import (
     avaliar_lote,
+    avaliacao_data_from_text,
     collect_pdfs,
     fields_from_text,
     parecer_from_facts,
@@ -210,6 +211,22 @@ def test_avaliar_lote_com_texto_recalcula_score(monkeypatch=None):
         edital_mod.extract_pdf_text = original
 
 
+def test_data_laudo_ignora_edital_e_condominio():
+    blob = (
+        "Edital publicado em 10/09/2026. "
+        "Débito condominial referência a maio de 2023 R$ 185,97. "
+        "Data da avaliação: 03/04/2015. Laudo de avaliação pericial R$ 400.000,00."
+    )
+    fields = fields_from_text(blob)
+    assert fields["avaliacao_data"] == "2015-04-03"
+    assert fields["avaliacao_data_origem"] == "laudo"
+    so_data = avaliacao_data_from_text(
+        "Processo n. 0001234-11.2012.8.26.0000 distribuído em 22/11/2012. Sem laudo."
+    )
+    assert so_data["avaliacao_data"] == "2012-11-22"
+    assert so_data["avaliacao_data_origem"] == "processo"
+
+
 if __name__ == "__main__":
     test_collect_pdfs_keeps_edital_skips_privacy()
     test_fields_from_text_read_avaliacao_ocupacao_divida()
@@ -222,4 +239,5 @@ if __name__ == "__main__":
     test_parecer_aguardando_nao_diz_arrematado()
     test_avaliar_lote_usa_fixture_sem_rede()
     test_avaliar_lote_com_texto_recalcula_score()
+    test_data_laudo_ignora_edital_e_condominio()
     print("ok")

@@ -2,7 +2,8 @@
 Score de oportunidade por lote (0-100) + motivos, calculado a partir do que
 já está disponível: desconto vs. referência de preço (quando existe — ver
 market_price.py, cobertura ainda pequena de propósito), ocupação, dívidas
-com valor, avanço de praça e qualidade da fonte (laudo vs. venal de IPTU).
+com valor, idade do laudo (antigo = oportunidade), avanço de praça e
+qualidade da fonte (laudo vs. venal de IPTU).
 
 Decisão de produto (conversa com o dono do catálogo): quando falta
 referência de preço — hoje a maioria dos lotes, só ~7% têm avaliação do
@@ -17,14 +18,16 @@ e não conta como overpay. Lance abaixo do venal ainda é sinal positivo.
 from __future__ import annotations
 
 import re
+from datetime import date, datetime
 from typing import Any, Optional
 
 # peso de cada fator quando presente; renormalizado entre os que têm dado
-PESO_DESCONTO = 0.40
-PESO_RISCO = 0.20
-PESO_DIVIDA = 0.20
+PESO_DESCONTO = 0.32
+PESO_RISCO = 0.18
+PESO_DIVIDA = 0.17
+PESO_IDADE = 0.15
 PESO_PRACA = 0.10
-PESO_QUALIDADE = 0.10
+PESO_QUALIDADE = 0.08
 
 RE_OCUPADO = re.compile(r"\bocupad[oa]\b", re.I)
 RE_DESOCUPADO = re.compile(r"\b(?:des|não\s+)ocupad[oa]|\blivre\b|\bvazi[oa]\b", re.I)
@@ -145,6 +148,76 @@ def _fator_praca(blob: str) -> tuple[float, Optional[str]]:
     return 1.0, f"já na {n}ª praça — desconto judicial grande, atenção ao prazo"
 
 
+def _as_date(value: Any) -> Optional[date]:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str) and len(value) >= 10:
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def idade_anos(quando: date, hoje: Optional[date] = None) -> float:
+    """Anos civis + fração. 17/09/2016 → 17/09/2026 = 10, não 9,99 por bissexto."""
+    ref = hoje or date.today()
+    if ref < quando:
+        return 0.0
+    cheios = ref.year - quando.year
+    if (ref.month, ref.day) < (quando.month, quando.day):
+        cheios -= 1
+    try:
+        aniversario = quando.replace(year=quando.year + cheios)
+    except ValueError:
+        aniversario = date(quando.year + cheios, 3, 1)
+    fracao = (ref - aniversario).days / 365.25
+    return max(0.0, cheios + fracao)
+
+
+def _fator_idade(
+    avaliacao_data: Optional[Any] = None,
+    origem: Optional[str] = None,
+    hoje: Optional[date] = None,
+) -> tuple[Optional[float], Optional[str]]:
+    """Laudo/processo antigo = oportunidade: juiz costuma só corrigir monetariamente."""
+    quando = _as_date(avaliacao_data)
+    if quando is None:
+        return None, None
+    anos = idade_anos(quando, hoje)
+    if anos < 1:
+        nota = 0.35 * anos
+    elif anos < 5:
+        nota = 0.35 + 0.40 * (anos - 1) / 4
+    elif anos < 10:
+        nota = 0.75 + 0.25 * (anos - 5) / 5
+    else:
+        nota = 1.0
+    n_txt = "1 ano" if round(anos) == 1 else f"{anos:.0f} anos"
+    data_txt = quando.strftime("%m/%Y")
+    if origem == "processo":
+        detalhe = (
+            f"processo de {n_txt} ({data_txt}) — tramitação longa; "
+            "avaliação de referência tende a ficar defasada"
+        )
+    elif anos >= 10:
+        detalhe = (
+            f"laudo de {n_txt} ({data_txt}) — forte oportunidade: "
+            "juiz em geral só pede correção monetária, abaixo do mercado"
+        )
+    elif anos >= 5:
+        detalhe = (
+            f"laudo de {n_txt} ({data_txt}) — correção monetária costuma ficar abaixo do mercado"
+        )
+    else:
+        detalhe = (
+            f"laudo de {n_txt} ({data_txt}) — já há descompasso frente ao mercado atual"
+        )
+    return nota, detalhe
+
+
 def _fator_qualidade(fonte: Optional[str]) -> tuple[Optional[float], Optional[str]]:
     if fonte == FONTE_MERCADO:
         return 0.7, "comparação com preço de mercado da região"
@@ -167,6 +240,9 @@ def compute_score(
     tem_divida: Optional[bool] = None,
     fonte_avaliacao: Optional[str] = None,
     dividas: Optional[dict[str, Any]] = None,
+    avaliacao_data: Optional[Any] = None,
+    avaliacao_data_origem: Optional[str] = None,
+    hoje: Optional[date] = None,
 ) -> dict[str, Any]:
     blob = f"{title} {description or ''}"
 
@@ -185,6 +261,9 @@ def compute_score(
         current_bid=current_bid,
         minimum_bid=minimum_bid,
     )
+    nota_idade, detalhe_idade = _fator_idade(
+        avaliacao_data, origem=avaliacao_data_origem, hoje=hoje
+    )
     nota_praca, detalhe_praca = _fator_praca(blob)
     nota_qualidade, detalhe_qualidade = _fator_qualidade(fonte_usada)
 
@@ -192,6 +271,7 @@ def compute_score(
         (PESO_DESCONTO, nota_desconto),
         (PESO_RISCO, nota_risco),
         (PESO_DIVIDA, nota_divida),
+        (PESO_IDADE, nota_idade),
         (PESO_PRACA, nota_praca),
         (PESO_QUALIDADE, nota_qualidade),
     ]
@@ -207,6 +287,7 @@ def compute_score(
             detalhe_desconto,
             detalhe_risco,
             detalhe_divida,
+            detalhe_idade,
             detalhe_praca,
             detalhe_qualidade,
         )

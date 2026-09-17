@@ -26,6 +26,8 @@ KEEP_RAW_KEYS = (
     "avaliacao_fonte",
     "valor_venal_imovel",
     "valor_venal_terreno",
+    "avaliacao_data",
+    "avaliacao_data_origem",
     "edital_sem_texto",
 )
 
@@ -79,6 +81,10 @@ def _refresh_score_if_avaliado(lot: LotModel) -> None:
         tem_divida=tem_divida,
         fonte_avaliacao=fonte,
         dividas=extra.get("dividas") if isinstance(extra.get("dividas"), dict) else None,
+        avaliacao_data=extra.get("avaliacao_data"),
+        avaliacao_data_origem=extra.get("avaliacao_data_origem")
+        if extra.get("avaliacao_data_origem") in ("laudo", "processo")
+        else None,
     )
     extra["score"] = info["score"]
     extra["score_tem_comparacao_preco"] = info["tem_comparacao_preco"]

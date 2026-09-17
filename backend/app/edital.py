@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from io import BytesIO
 from typing import Any, Optional
 from urllib.parse import urljoin
@@ -55,6 +55,37 @@ RE_LAUDO = re.compile(
 RE_AREA_TERRENO = re.compile(r"[aá]rea\s+do\s+terreno[:\s]+([\d.]+,\d+)\s*m", re.I)
 RE_AREA_EDIF = re.compile(
     r"(?:edifica[cç][aã]o\s+principal|[aá]rea\s+(?:privativa|constru[ií]da|[úu]til))[:\s]+([\d.]+,\d+)\s*m",
+    re.I,
+)
+MESES = {
+    "janeiro": 1,
+    "fevereiro": 2,
+    "marco": 3,
+    "março": 3,
+    "abril": 4,
+    "maio": 5,
+    "junho": 6,
+    "julho": 7,
+    "agosto": 8,
+    "setembro": 9,
+    "outubro": 10,
+    "novembro": 11,
+    "dezembro": 12,
+}
+RE_DATA_NUM = re.compile(r"\b(\d{1,2})[/\.-](\d{1,2})[/\.-]((?:19|20)\d{2})\b")
+RE_DATA_EXT = re.compile(
+    r"\b(\d{1,2})\s+de\s+(janeiro|fevereiro|mar[cç]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\s+de\s+((?:19|20)\d{2})\b",
+    re.I,
+)
+RE_ANO_CTX = re.compile(r"\b((?:19|20)\d{2})\b")
+RE_CTX_LAUDO = re.compile(
+    r"data[- ]base|data\s+da\s+avalia|laudo|avalia[cç][aã]o",
+    re.I,
+)
+RE_CTX_PROCESSO = re.compile(r"distribu[ií]d|ajuizad|processo\s+n", re.I)
+RE_CTX_LIXO = re.compile(
+    r"edital|publicad|leil[aã]o|pra[cç]a|venciment|intim|condom|iptu|"
+    r"d[ií]vida\s+ativa|refer[eê]ncia|atualiza[cç][aã]o\s+monet|at[eé]\s+\d",
     re.I,
 )
 
@@ -139,6 +170,77 @@ def _area(pattern: re.Pattern[str], blob: str) -> Optional[float]:
     return value if value and value > 0 else None
 
 
+def _safe_date(year: int, month: int, day: int) -> Optional[date]:
+    try:
+        value = date(year, month, day)
+    except ValueError:
+        return None
+    if value.year < 1980 or value > date.today():
+        return None
+    return value
+
+
+def _last_end(pattern: re.Pattern[str], text: str) -> int:
+    matches = list(pattern.finditer(text))
+    return matches[-1].end() if matches else -1
+
+
+def _context_kind(snippet: str) -> Optional[str]:
+    """O rótulo mais perto da data ganha. 'Edital... Data da avaliação: 2015' conta como laudo."""
+    laudo_at = _last_end(RE_CTX_LAUDO, snippet)
+    proc_at = _last_end(RE_CTX_PROCESSO, snippet)
+    lixo_at = _last_end(RE_CTX_LIXO, snippet)
+    best = max(laudo_at, proc_at)
+    if best < 0:
+        return None
+    if lixo_at > best:
+        return None
+    return "laudo" if laudo_at >= proc_at else "processo"
+
+
+def avaliacao_data_from_text(blob: str) -> dict[str, str]:
+    """Data do laudo (preferida) ou da distribuição do processo. Ignora edital/IPTU."""
+    found: list[tuple[date, str]] = []
+    for match in RE_DATA_NUM.finditer(blob):
+        day, month, year = int(match.group(1)), int(match.group(2)), int(match.group(3))
+        quando = _safe_date(year, month, day)
+        if not quando:
+            continue
+        start = max(0, match.start() - 90)
+        kind = _context_kind(blob[start:match.start()])
+        if kind:
+            found.append((quando, kind))
+    for match in RE_DATA_EXT.finditer(blob):
+        day = int(match.group(1))
+        month = MESES.get(match.group(2).lower().replace("ç", "c"), 0)
+        year = int(match.group(3))
+        quando = _safe_date(year, month, day) if month else None
+        if not quando:
+            continue
+        start = max(0, match.start() - 90)
+        kind = _context_kind(blob[start:match.start()])
+        if kind:
+            found.append((quando, kind))
+    if not found:
+        for match in RE_ANO_CTX.finditer(blob):
+            year = int(match.group(1))
+            quando = _safe_date(year, 6, 30)
+            if not quando:
+                continue
+            start = max(0, match.start() - 50)
+            kind = _context_kind(blob[start:match.start()])
+            if kind:
+                found.append((quando, kind))
+    if not found:
+        return {}
+    laudos = [item for item in found if item[1] == "laudo"]
+    escolhidos = laudos or [item for item in found if item[1] == "processo"]
+    if not escolhidos:
+        return {}
+    quando, origem = min(escolhidos, key=lambda item: item[0])
+    return {"avaliacao_data": quando.isoformat(), "avaliacao_data_origem": origem}
+
+
 def _pick_avaliacao(blob: str) -> dict[str, Any]:
     """Laudo/avaliação judicial ganha. Venal do imóvel ≠ venal do terreno."""
     out: dict[str, Any] = {}
@@ -181,6 +283,7 @@ def _pick_avaliacao(blob: str) -> dict[str, Any]:
 def fields_from_text(blob: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
     out.update(_pick_avaliacao(blob))
+    out.update(avaliacao_data_from_text(blob))
     area_terreno = _area(RE_AREA_TERRENO, blob)
     area_edif = _area(RE_AREA_EDIF, blob)
     if area_terreno:
@@ -248,6 +351,10 @@ def parecer_from_facts(facts: dict[str, Any]) -> str:
     area_e = facts.get("area_edificacao")
     if isinstance(area_e, (int, float)):
         linhas.append(f"Área da edificação: {area_e:.2f} m².".replace(".", ","))
+    data_aval = facts.get("avaliacao_data")
+    if isinstance(data_aval, str) and data_aval:
+        origem = "processo" if facts.get("avaliacao_data_origem") == "processo" else "laudo"
+        linhas.append(f"Data do {origem}: {data_aval}.")
     if facts.get("scanned"):
         linhas.append("Há PDF escaneado sem texto extraível; OCR fica para um próximo passo.")
     if not linhas:
@@ -273,6 +380,8 @@ def _mistral_parecer(facts: dict[str, Any]) -> str | None:
         "valor_venal_terreno": facts.get("valor_venal_terreno"),
         "area_edificacao": facts.get("area_edificacao"),
         "area_terreno": facts.get("area_terreno"),
+        "avaliacao_data": facts.get("avaliacao_data"),
+        "avaliacao_data_origem": facts.get("avaliacao_data_origem"),
         "lance_atual": facts.get("lance_atual"),
         "status": facts.get("status") or "aberto",
         "ocupacao": facts.get("ocupacao"),
@@ -308,6 +417,8 @@ def _mistral_parecer(facts: dict[str, Any]) -> str | None:
                             "Valor venal do terreno NÃO é o valor do imóvel; use avaliacao "
                             "ou valor_venal_imovel. Área útil é area_edificacao, não area_terreno. "
                             "avaliacao_fonte=venal_imovel é IPTU, não laudo de mercado. "
+                            "avaliacao_data antiga é oportunidade: o juiz costuma só corrigir "
+                            "monetariamente, abaixo do mercado. 1 ano já é bom; 5+ melhor; 10+ melhor ainda. "
                             "Não use adjetivo de venda. Se faltar dado, diga que falta. "
                             "Explique o score com os motivos."
                         ),
@@ -395,6 +506,8 @@ def avaliar_lote(
         "area_edificacao",
         "area_terreno",
         "area",
+        "avaliacao_data",
+        "avaliacao_data_origem",
     ):
         if extracted.get(key) not in (None, "", [], {}):
             out[key] = extracted[key]
@@ -423,6 +536,10 @@ def avaliar_lote(
         tem_divida=tem_divida if isinstance(tem_divida, bool) else None,
         fonte_avaliacao=fonte,
         dividas=out.get("dividas") if isinstance(out.get("dividas"), dict) else None,
+        avaliacao_data=out.get("avaliacao_data"),
+        avaliacao_data_origem=out.get("avaliacao_data_origem")
+        if out.get("avaliacao_data_origem") in ("laudo", "processo")
+        else None,
     )
     out["score"] = score_info["score"]
     out["score_tem_comparacao_preco"] = score_info["tem_comparacao_preco"]
@@ -438,6 +555,8 @@ def avaliar_lote(
         "valor_venal_imovel": out.get("valor_venal_imovel"),
         "area_edificacao": out.get("area_edificacao"),
         "area_terreno": out.get("area_terreno"),
+        "avaliacao_data": out.get("avaliacao_data"),
+        "avaliacao_data_origem": out.get("avaliacao_data_origem"),
         "lance_atual": current_bid if current_bid is not None else minimum_bid,
         "status": status,
         "ocupacao": ocupacao,

@@ -32,6 +32,8 @@ export type Lot = {
   dividas: Record<string, unknown> | null;
   avaliacao_edital: number | null;
   avaliacao_fonte?: string | null;
+  avaliacao_data?: string | null;
+  avaliacao_data_origem?: string | null;
   status?: string | null;
   current_bid: number | null;
   minimum_bid: number | null;
@@ -54,6 +56,16 @@ export function lotHeadline(lot: Lot): string {
   if (lot.headline) return lot.headline;
   const tipo = lot.tipo ? TIPO_LABELS[lot.tipo] || lot.tipo : null;
   return [tipo, lot.bairro, lot.cidade].filter(Boolean).join(' · ') || 'Lote';
+}
+
+function formatLaudoDate(iso: string): string {
+  const stamp = Date.parse(`${iso.slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(stamp)) return iso;
+  const when = new Date(stamp);
+  const years = Math.max(0, Math.round((Date.now() - stamp) / (365.25 * 24 * 3600 * 1000)));
+  const month = String(when.getMonth() + 1).padStart(2, '0');
+  const label = years === 1 ? '1 ano' : `${years} anos`;
+  return `${month}/${when.getFullYear()} · ${label}`;
 }
 
 export type ScoreTier = 'alto' | 'baixo' | 'neutro' | 'sem-preco';
@@ -135,6 +147,12 @@ export function LotCard({ lot, onUpdated }: { lot: Lot; onUpdated?: (lot: Lot) =
             <>
               <dt>{lot.avaliacao_fonte === 'venal_imovel' ? 'Valor venal (IPTU)' : 'Avaliação'}</dt>
               <dd>{formatMoney(lot.reference_value)}</dd>
+            </>
+          ) : null}
+          {lot.avaliacao_data ? (
+            <>
+              <dt>{lot.avaliacao_data_origem === 'processo' ? 'Processo desde' : 'Data do laudo'}</dt>
+              <dd>{formatLaudoDate(lot.avaliacao_data)}</dd>
             </>
           ) : null}
           {lot.valor_mercado_estimado != null ? (
