@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from app.search import filter_lots, lot_matches
+from app.search import filter_lots, lot_matches, score_sort_key
 
 
 def _lot(**kwargs):
@@ -88,6 +88,17 @@ def test_filter_lots_combines_criteria():
     assert len(found) == 1
 
 
+def test_score_sort_key_orders_desc_with_missing_last():
+    lots = [
+        _lot(title="Sem score", raw_data="{}"),
+        _lot(title="Score baixo", raw_data='{"score": 20}'),
+        _lot(title="Score alto", raw_data='{"score": 80}'),
+        _lot(title="Score zero", raw_data='{"score": 0}'),
+    ]
+    ordered = sorted(lots, key=score_sort_key)
+    assert [lot.title for lot in ordered] == ["Score alto", "Score baixo", "Score zero", "Sem score"]
+
+
 if __name__ == "__main__":
     test_cidade_accent_and_raw_data()
     test_cidade_ignores_description_and_uses_title_fallback()
@@ -97,4 +108,5 @@ if __name__ == "__main__":
     test_q_matches_endereco()
     test_tipo_ignores_title_dump()
     test_filter_lots_combines_criteria()
+    test_score_sort_key_orders_desc_with_missing_last()
     print("ok")

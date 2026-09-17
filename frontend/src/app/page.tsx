@@ -40,6 +40,7 @@ export default function Home() {
   const [teto, setTeto] = useState('');
   const [q, setQ] = useState('');
   const [applied, setApplied] = useState({ cidade: '', tipo: 'imovel', teto: '', q: '' });
+  const [sortByScore, setSortByScore] = useState(false);
   const [lots, setLots] = useState<Lot[]>([]);
   const [facets, setFacets] = useState<Facets | null>(null);
   const [loading, setLoading] = useState(true);
@@ -83,6 +84,7 @@ export default function Home() {
     if (applied.tipo) params.set('tipo', applied.tipo);
     if (applied.teto) params.set('teto', applied.teto);
     if (applied.q) params.set('q', applied.q);
+    if (sortByScore) params.set('sort', 'score');
     params.set('limit', '80');
     Promise.all([
       fetch(`${API_URL}/api/lots?${params}`, { signal: ac.signal }),
@@ -104,7 +106,7 @@ export default function Home() {
         if (!ac.signal.aborted) setLoading(false);
       });
     return () => ac.abort();
-  }, [source, applied, reloadToken]);
+  }, [source, applied, sortByScore, reloadToken]);
 
   const onSearch = (e: FormEvent) => {
     e.preventDefault();
@@ -238,6 +240,10 @@ export default function Home() {
         <label className="field">
           Teto (R$)
           <input value={teto} onChange={(e) => setTeto(e.target.value)} inputMode="numeric" placeholder="300000" />
+        </label>
+        <label className="field field-checkbox">
+          <input type="checkbox" checked={sortByScore} onChange={(e) => setSortByScore(e.target.checked)} />
+          Ordenar por score
         </label>
         <button className="btn" type="submit">
           Buscar
