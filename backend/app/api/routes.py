@@ -1,7 +1,7 @@
 import time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import select, func, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -187,17 +187,56 @@ async def health():
 RUN_SCRAPE_COOLDOWN_S = 60.0
 _scrape_running = False
 _scrape_last_finished: float | None = None
+_scrape_job: dict = {
+    "status": "idle",  # idle | running | done | error
+    "summary": None,
+    "error": None,
+    "current_source": None,
+    "started_at": None,
+    "finished_at": None,
+}
 
 
-@router.post("/run-scrape")
-async def run_scrape():
-    """
-    Dispara a execução de todos os scrapers registrados (Calil, Vegas, Zuk, Mega,
-    Grupo Lance) e persiste no banco. Use para validar o primeiro scrape ou
-    atualizar dados manualmente. Limitado a uma execução por vez, com intervalo
-    mínimo entre rodadas, pois cada chamada bate nos sites de origem.
-    """
+async def _run_scrape_job() -> None:
+    """Roda em segundo plano (BackgroundTasks) — não bloqueia a resposta do POST."""
     global _scrape_running, _scrape_last_finished
+    from app.scrapers.run_all import run_all
+
+    def on_progress(source_name: str, partial_summary: dict) -> None:
+        # run_all reusa e muta o mesmo dict a cada fonte — snapshot próprio
+        # pra status não "vazar" a fonte seguinte antes do current_source virar.
+        _scrape_job["summary"] = {
+            **partial_summary,
+            "by_source": dict(partial_summary.get("by_source") or {}),
+            "errors": list(partial_summary.get("errors") or []),
+        }
+        _scrape_job["current_source"] = source_name
+
+    try:
+        summary = await run_all(on_progress=on_progress)
+        _scrape_job["summary"] = summary
+        _scrape_job["status"] = "done"
+    except Exception as exc:
+        _scrape_job["status"] = "error"
+        _scrape_job["error"] = str(exc)
+    finally:
+        _scrape_job["current_source"] = None
+        _scrape_job["finished_at"] = time.time()
+        _scrape_running = False
+        _scrape_last_finished = time.monotonic()
+
+
+@router.post("/run-scrape", status_code=202)
+async def run_scrape(background_tasks: BackgroundTasks):
+    """
+    Dispara em segundo plano a execução de todos os scrapers registrados
+    (Calil, Vegas, Zuk, Mega, Grupo Lance) e persiste no banco. Retorna
+    imediatamente (202) sem esperar o scrape terminar — acompanhe o
+    progresso em GET /api/run-scrape/status. Limitado a uma execução por
+    vez, com intervalo mínimo entre rodadas, pois cada chamada bate nos
+    sites de origem.
+    """
+    global _scrape_running
     if _scrape_running:
         raise HTTPException(status_code=429, detail="Já existe um scrape em andamento. Aguarde terminar.")
     if _scrape_last_finished is not None:
@@ -210,11 +249,18 @@ async def run_scrape():
                 headers={"Retry-After": str(retry_after)},
             )
     _scrape_running = True
-    try:
-        from app.scrapers.run_all import run_all
+    _scrape_job.update(
+        status="running",
+        summary=None,
+        error=None,
+        current_source=None,
+        started_at=time.time(),
+        finished_at=None,
+    )
+    background_tasks.add_task(_run_scrape_job)
+    return {"status": "started"}
 
-        summary = await run_all()
-        return {"status": "ok", **summary}
-    finally:
-        _scrape_running = False
-        _scrape_last_finished = time.monotonic()
+
+@router.get("/run-scrape/status")
+async def run_scrape_status():
+    return dict(_scrape_job)

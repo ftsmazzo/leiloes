@@ -37,8 +37,13 @@ def _enrich_auctions(auctions, cap: int = 12) -> None:
                 lot.category = str(filled["tipo"])
 
 
-async def run_all():
-    """Retorna dict com total_auctions, total_lots, by_source e errors."""
+async def run_all(on_progress=None):
+    """Retorna dict com total_auctions, total_lots, by_source e errors.
+
+    on_progress(source_name, summary_parcial), se passado, e chamado apos cada
+    scraper terminar (ok ou com erro) — usado pra reportar progresso numa
+    rodada assincrona (ver POST /api/run-scrape).
+    """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -62,6 +67,8 @@ async def run_all():
                 await session.rollback()
                 print(f"Erro no scraper {scraper.source_name}: {e}")
                 summary["errors"].append({"source": scraper.source_name, "error": str(e)})
+            if on_progress is not None:
+                on_progress(scraper.source_name, summary)
             await asyncio.sleep(1)  # Respeito entre fontes
     print("Scrapers concluídos.")
     return summary

@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Lot, LotCard } from '../components/LotCard';
 import { API_URL } from '../lib/api';
 
@@ -15,13 +15,22 @@ type Facets = {
   extract?: { gliner: boolean; openrouter: boolean; extract_model: string };
 };
 
-type ScrapeResult = {
-  status: string;
+type ScrapeSummary = {
   total_auctions: number;
   total_lots: number;
   by_source?: Record<string, { auctions: number; lots: number }>;
   errors?: { source: string; error: string }[];
 };
+
+type ScrapeStatus = {
+  status: 'idle' | 'running' | 'done' | 'error';
+  summary: ScrapeSummary | null;
+  error: string | null;
+  current_source: string | null;
+};
+
+const SCRAPE_POLL_MS = 1500;
+const SCRAPE_MAX_WAIT_MS = 5 * 60_000;
 
 export default function Home() {
   const [sources, setSources] = useState<Source[]>([]);
@@ -37,11 +46,20 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [scrapeLoading, setScrapeLoading] = useState(false);
-  const [scrapeResult, setScrapeResult] = useState<ScrapeResult | null>(null);
+  const [scrapeResult, setScrapeResult] = useState<ScrapeSummary | null>(null);
   const [scrapeError, setScrapeError] = useState<string | null>(null);
+  const [scrapeSource, setScrapeSource] = useState<string | null>(null);
+  const cancelledRef = useRef(false);
 
   const tabs: Source[] = [{ id: '', label: 'Todas' }, ...sources];
   const cityOptions = useMemo(() => facets?.cidades ?? [], [facets]);
+
+  useEffect(
+    () => () => {
+      cancelledRef.current = true;
+    },
+    [],
+  );
 
   useEffect(() => {
     const ac = new AbortController();
@@ -93,28 +111,54 @@ export default function Home() {
     setApplied({ cidade: cidade.trim(), tipo, teto: teto.trim(), q: q.trim() });
   };
 
+  const pollScrapeStatus = async (deadline: number) => {
+    if (cancelledRef.current) return;
+    let data: ScrapeStatus | null = null;
+    try {
+      const res = await fetch(`${API_URL}/api/run-scrape/status`);
+      data = res.ok ? await res.json() : null;
+    } catch {
+      data = null;
+    }
+    if (cancelledRef.current) return;
+    if (data) {
+      setScrapeSource(data.current_source);
+      if (data.status === 'done') {
+        setScrapeResult(data.summary);
+        setScrapeLoading(false);
+        setScrapeSource(null);
+        setReloadToken((n) => n + 1);
+        return;
+      }
+      if (data.status === 'error') {
+        setScrapeError(data.error || 'Falha ao rodar scrape');
+        setScrapeLoading(false);
+        setScrapeSource(null);
+        return;
+      }
+    }
+    if (Date.now() > deadline) {
+      setScrapeError('Scrape demorou demais. Tente checar de novo em instantes.');
+      setScrapeLoading(false);
+      setScrapeSource(null);
+      return;
+    }
+    setTimeout(() => pollScrapeStatus(deadline), SCRAPE_POLL_MS);
+  };
+
   const runScrape = async () => {
     setScrapeLoading(true);
     setScrapeResult(null);
     setScrapeError(null);
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 180_000);
+    setScrapeSource(null);
     try {
-      const res = await fetch(`${API_URL}/api/run-scrape`, { method: 'POST', signal: controller.signal });
-      clearTimeout(timeoutId);
-      const data = await res.json();
+      const res = await fetch(`${API_URL}/api/run-scrape`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || 'Falha ao rodar scrape');
-      setScrapeResult(data);
-      setReloadToken((n) => n + 1);
+      pollScrapeStatus(Date.now() + SCRAPE_MAX_WAIT_MS);
     } catch (e) {
-      clearTimeout(timeoutId);
-      if (e instanceof Error) {
-        if (e.name === 'AbortError') setScrapeError('Scrape demorou mais de 3 minutos. Tente de novo.');
-        else if (e.message === 'Failed to fetch') {
-          setScrapeError(`API fora. Suba o backend em ${API_URL}.`);
-        } else setScrapeError(e.message);
-      } else setScrapeError('Erro ao rodar scrape');
-    } finally {
+      const msg = e instanceof Error ? e.message : 'Erro ao rodar scrape';
+      setScrapeError(msg === 'Failed to fetch' ? `API fora. Suba o backend em ${API_URL}.` : msg);
       setScrapeLoading(false);
     }
   };
@@ -199,7 +243,7 @@ export default function Home() {
           Buscar
         </button>
         <button className="btn btn-secondary" type="button" onClick={runScrape} disabled={scrapeLoading} aria-busy={scrapeLoading}>
-          {scrapeLoading ? 'Atualizando catálogo…' : 'Atualizar catálogo'}
+          {scrapeLoading ? `Atualizando${scrapeSource ? ` (${scrapeSource})` : '…'}` : 'Atualizar catálogo'}
         </button>
       </form>
 
