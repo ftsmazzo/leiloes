@@ -5,12 +5,14 @@ from app.scrapers.calil import CalilScraper
 from app.scrapers.vegas import VegasScraper
 from app.scrapers.zuk import ZukScraper
 from app.scrapers.mega import MegaScraper
+from app.scrapers.lance import LanceScraper
 
 SOURCES: list[type[BaseScraper]] = [
     CalilScraper,
     VegasScraper,
     ZukScraper,
     MegaScraper,
+    LanceScraper,
 ]
 
 

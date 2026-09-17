@@ -13,6 +13,7 @@ class SourceEnum(str, Enum):
     VEGAS = "vegas"
     ZUK = "zuk"
     MEGA = "mega"
+    LANCE = "lance"
 
 
 class AuctionModel(Base):
