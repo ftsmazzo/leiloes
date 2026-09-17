@@ -107,6 +107,11 @@ def cidade_from_text(*parts: Any, allow_bare: bool = False) -> str | None:
         text = _as_text(part)
         if not text:
             continue
+        locality = re.fullmatch(r"([A-ZÀ-Ÿ][\wÀ-ÿ' -]{1,40}?)\s*,\s*[A-Z]{2}", text.strip())
+        if locality:
+            name = locality.group(1).strip(" -,")
+            if 2 < len(name) <= 40 and not re.search(r"vara|jucesp|leil[aã]o|comarca", name, re.I):
+                return name
         labeled = re.search(r"Cidade:\s*([^\n<]+)", text, re.I)
         if labeled:
             name = re.sub(r"\s+", " ", labeled.group(1)).split("/")[0].strip(" -,")

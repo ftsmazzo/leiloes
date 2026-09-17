@@ -15,6 +15,14 @@ def test_cidade_na_cidade_de():
     )
 
 
+def test_cidade_locality_comma_uf():
+    """Campo isolado tipo .card-locality do Zuk/Mega/Grupo Lance: 'Cidade, UF'."""
+    assert cidade_from_text("Formiga, MG") == "Formiga"
+    assert cidade_from_text("Santa Rosa De Viterbo, SP") == "Santa Rosa De Viterbo"
+    # frase com barra não pode ser confundida com o campo isolado
+    assert cidade_from_text("Casa em Sertaozinho/SP") == "Sertaozinho"
+
+
 def test_enrich_regex_without_ai():
     extra = enrich_extra(
         "CASA RESIDENCIAL na cidade de Brodowski/SP",
@@ -61,6 +69,7 @@ def test_format_card_clips_legal_dump():
 if __name__ == "__main__":
     test_tipo_from_title()
     test_cidade_na_cidade_de()
+    test_cidade_locality_comma_uf()
     test_enrich_regex_without_ai()
     test_format_card_strips_legal_title()
     test_format_card_clips_legal_dump()
