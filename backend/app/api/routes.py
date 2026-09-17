@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api", tags=["api"])
 
 @router.get("/auctions", response_model=list[AuctionOut])
 async def list_auctions(
-    source: Optional[str] = Query(None, description="Filtrar por fonte: calil, vegas, zuk, mega"),
+    source: Optional[str] = Query(None, description="Filtrar por fonte: calil, vegas, zuk, mega, lance"),
     limit: int = Query(50, le=100),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -113,7 +113,7 @@ async def list_lots(
 
 @router.get("/sources")
 async def list_sources():
-    labels = {"calil": "Calil", "vegas": "Vegas", "zuk": "Zuk", "mega": "Mega", "demo": "Demo"}
+    labels = {"calil": "Calil", "vegas": "Vegas", "zuk": "Zuk", "mega": "Mega", "lance": "Grupo Lance", "demo": "Demo"}
     return [{"id": name, "label": labels.get(name, name.title())} for name in source_names()]
 
 
