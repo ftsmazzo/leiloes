@@ -1,3 +1,5 @@
+import { formatMoney, httpUrl } from '../lib/api';
+
 export type Lot = {
   id: number;
   auction_id: number;
@@ -29,22 +31,6 @@ const TIPO_LABELS: Record<string, string> = {
   imovel: 'Imóvel',
   veiculo: 'Veículo',
 };
-
-export function formatMoney(value: number | null): string {
-  if (value == null) return '—';
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(value);
-}
-
-export function httpUrl(url: string | null): string | null {
-  if (!url) return null;
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return url;
-  } catch {
-    return null;
-  }
-  return null;
-}
 
 export function lotHeadline(lot: Lot): string {
   if (lot.headline) return lot.headline;

@@ -2,8 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Lot, LotCard } from '../components/LotCard';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8050';
+import { API_URL } from '../lib/api';
 
 type Source = { id: string; label: string };
 
@@ -80,7 +79,7 @@ export default function Home() {
       .catch((e) => {
         if (e instanceof Error && e.name === 'AbortError') return;
         const msg = e instanceof Error ? e.message : 'Falha ao carregar';
-        setError(msg === 'Failed to fetch' ? 'Não foi possível conectar à API em 127.0.0.1:8050.' : msg);
+        setError(msg === 'Failed to fetch' ? `Não foi possível conectar à API em ${API_URL}.` : msg);
         setLots([]);
       })
       .finally(() => {
@@ -112,7 +111,7 @@ export default function Home() {
       if (e instanceof Error) {
         if (e.name === 'AbortError') setScrapeError('Scrape demorou mais de 3 minutos. Tente de novo.');
         else if (e.message === 'Failed to fetch') {
-          setScrapeError('API fora. Suba o backend em 127.0.0.1:8050.');
+          setScrapeError(`API fora. Suba o backend em ${API_URL}.`);
         } else setScrapeError(e.message);
       } else setScrapeError('Erro ao rodar scrape');
     } finally {

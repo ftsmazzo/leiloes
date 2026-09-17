@@ -2,8 +2,7 @@
 
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { API_URL, formatMoney, httpUrl } from '../../../lib/api';
 
 type Lot = {
   id: number;
@@ -27,24 +26,6 @@ type AuctionDetail = {
   updated_at: string;
   lots: Lot[];
 };
-
-function formatMoney(value: number | null): string {
-  if (value == null) return '—';
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(
-    value,
-  );
-}
-
-function httpUrl(url: string | null): string | null {
-  if (!url) return null;
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return url;
-  } catch {
-    return null;
-  }
-  return null;
-}
 
 export default function LeilaoDetailPage() {
   const params = useParams();
