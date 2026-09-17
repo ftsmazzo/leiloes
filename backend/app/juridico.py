@@ -51,22 +51,14 @@ RE_USUFRUTO_LIVRE = re.compile(
     re.I,
 )
 RE_MEACAO = re.compile(
-    r"\bmea[cç][aã]o\b|"
-    r"fra[cç][aã]o\s+ideal|"
-    r"parte\s+ideal|"
-    r"copropriedade|"
-    r"(?:50|50,00)\s*%.{0,25}(?:do\s+im[oó]vel|da\s+propriedade)|"
-    r"apenas\s+(?:a\s+)?metade",
+    r"penhora\s+da\s+mea[cç][aã]o|"
+    r"mea[cç][aã]o\s+(?:do\s+executado|do\s+im[oó]vel|da\s+propriedade)|"
+    r"(?:leil[aã]o|aliena[cç][aã]o|hasta|venda)\s+d[ae]\s+mea[cç][aã]o|"
+    r"apenas\s+(?:a\s+)?mea[cç][aã]o|"
+    r"(?:50|50,00)\s*%.{0,20}(?:do\s+im[oó]vel|da\s+propriedade)|"
+    r"apenas\s+(?:a\s+)?metade\s+(?:do\s+im[oó]vel|da\s+propriedade)",
     re.I,
 )
-RE_CONJUGE_BEM = re.compile(
-    r"c[oô]njuge\s+do\s+executado|"
-    r"executado\s+e\s+(?:sua\s+)?c[oô]njuge|"
-    r"bem\s+de\s+fam[ií]lia|"
-    r"comunh[aã]o\s+(?:parcial|universal)",
-    re.I,
-)
-RE_CONJUGE_ARREMATANTE = re.compile(r"c[oô]njuge\s+do\s+arrematante", re.I)
 
 
 def _fold(text: str) -> str:
@@ -190,9 +182,6 @@ def riscos_from_text(blob: str, page_text: str = "", source: str = "") -> dict[s
 
     if RE_USUFRUTO.search(blob) and not RE_USUFRUTO_LIVRE.search(blob):
         out["usufruto"] = True
-    meacao = bool(RE_MEACAO.search(blob))
-    conjuge = bool(RE_CONJUGE_BEM.search(blob))
-    so_arrematante = bool(RE_CONJUGE_ARREMATANTE.search(blob)) and not conjuge
-    if (meacao or conjuge) and not so_arrematante:
+    if RE_MEACAO.search(blob) or RE_MEACAO.search(page_text):
         out["meacao"] = True
     return out

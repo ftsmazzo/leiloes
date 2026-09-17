@@ -259,6 +259,19 @@ def test_citado_nao_aplica_teto():
     assert any("citado (DataJud)" in m for m in result["motivos"])
 
 
+def test_docs_limitados_alerta_sem_teto_de_meacao():
+    result = compute_score(
+        title="Apartamento Jundiapeba",
+        current_bid=25978.19,
+        reference_value=51956.37,
+        riscos={"docs_limitados": True, "datajud": "nao_encontrado"},
+    )
+    assert result["score"] > 28
+    assert any("análise limitada" in m for m in result["motivos"])
+    assert any("DataJud" in m for m in result["motivos"])
+    assert not any("vende 100%" in m for m in result["motivos"])
+
+
 if __name__ == "__main__":
     test_score_sem_nenhuma_referencia_de_preco_fica_parcial()
     test_score_com_desconto_grande_sobe_e_avisa_fonte()
@@ -279,4 +292,5 @@ if __name__ == "__main__":
     test_nao_citado_limita_score_ao_fundo()
     test_usufruto_e_meacao_limitam_score()
     test_citado_nao_aplica_teto()
+    test_docs_limitados_alerta_sem_teto_de_meacao()
     print("ok")

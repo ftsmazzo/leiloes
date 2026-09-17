@@ -47,6 +47,23 @@ def test_conjuge_do_arrematante_nao_e_meacao():
     assert "meacao" not in riscos
 
 
+def test_fracao_ideal_do_condominio_nao_e_meacao():
+    riscos = riscos_from_text(
+        "Apartamento nº 34, área total de 48,383m², fração ideal de 0,357143% do terreno; "
+        "o cônjuge do executado será intimado nos termos do art. 842 do CPC. "
+        "Bem de família e comunhão parcial de bens conforme a lei."
+    )
+    assert "meacao" not in riscos
+
+
+def test_regra_generica_de_conjuge_nao_e_meacao():
+    riscos = riscos_from_text(
+        "Aplica-se a regra do cônjuge do executado. Comunhão universal. "
+        "O arrematante e seu cônjuge deverão assinar."
+    )
+    assert "meacao" not in riscos
+
+
 def test_leiloeiro_diverge_entre_edital_e_anuncio():
     riscos = riscos_from_text(
         "Leiloeiro público oficial João da Silva.",
@@ -98,6 +115,8 @@ if __name__ == "__main__":
     test_livre_de_usufruto_nao_marca()
     test_meacao_e_conjuge()
     test_conjuge_do_arrematante_nao_e_meacao()
+    test_fracao_ideal_do_condominio_nao_e_meacao()
+    test_regra_generica_de_conjuge_nao_e_meacao()
     test_leiloeiro_diverge_entre_edital_e_anuncio()
     test_calil_no_site_e_no_edital_nao_diverge()
     test_casa_calil_pelo_source_bate_com_edital()

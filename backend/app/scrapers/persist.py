@@ -29,6 +29,8 @@ KEEP_RAW_KEYS = (
     "avaliacao_data",
     "avaliacao_data_origem",
     "edital_sem_texto",
+    "docs_limitados",
+    "lance_pagina",
     "riscos",
     "processo_cnj",
     "nao_entrar",

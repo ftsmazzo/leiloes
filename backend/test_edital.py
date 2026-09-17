@@ -6,6 +6,7 @@ from app.edital import (
     collect_pdfs,
     fields_from_text,
     parecer_from_facts,
+    precos_from_page,
 )
 from app.scrapers.extract import leilao_status
 from app.scrapers.soleon import lots_from_imovel_list
@@ -246,6 +247,38 @@ def test_fields_from_text_le_riscos_do_edital():
     assert fields["riscos"]["meacao"] is True
 
 
+def test_fracao_ideal_do_lote_nao_vira_meacao():
+    blob = (
+        "DIREITOS DA ALIENAÇÃO FIDUCIARIA da unidade autônoma Apartamento nº 34, "
+        "área total de 48,383m², fração ideal de 0,357143% do terreno. "
+        "O cônjuge do executado será intimado. Bem de família."
+    )
+    fields = fields_from_text(blob)
+    assert "meacao" not in (fields.get("riscos") or {})
+
+
+def test_precos_from_page_separa_lance_e_avaliacao():
+    precos = precos_from_page(
+        "Valor atual R$ 25.978,19 Incremento R$ 1.000,00 Valor de avaliação R$ 51.956,37"
+    )
+    assert precos["lance_pagina"] == 25978.19
+    assert precos["avaliacao_pagina"] == 51956.37
+
+
+def test_parecer_diz_quando_faltou_documento_e_datajud():
+    text = parecer_from_facts(
+        {
+            "score": 55,
+            "docs_limitados": True,
+            "riscos": {"datajud": "nao_encontrado"},
+            "motivos": ["matrícula/laudo sem texto extraível — análise limitada"],
+        }
+    )
+    assert "matrícula" in text.lower() or "limitada" in text.lower()
+    assert "DataJud" in text
+    assert "não entre" not in text.lower()
+
+
 def test_avaliar_lote_consulta_datajud_injetado():
     from app import edital as edital_mod
 
@@ -312,5 +345,8 @@ if __name__ == "__main__":
     test_avaliar_lote_com_texto_recalcula_score()
     test_data_laudo_ignora_edital_e_condominio()
     test_fields_from_text_le_riscos_do_edital()
+    test_fracao_ideal_do_lote_nao_vira_meacao()
+    test_precos_from_page_separa_lance_e_avaliacao()
+    test_parecer_diz_quando_faltou_documento_e_datajud()
     test_avaliar_lote_consulta_datajud_injetado()
     print("ok")

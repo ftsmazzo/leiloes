@@ -404,6 +404,13 @@ def _fator_juridico(riscos: Optional[dict[str, Any]]) -> tuple[Optional[float], 
     if riscos.get("leiloeiro_ok") is False:
         notas.append(-0.3)
         motivos.append("leiloeiro do edital diverge do anúncio — conferir se é o mesmo processo")
+    if riscos.get("docs_limitados"):
+        motivos.append(
+            "matrícula/laudo sem texto extraível — análise limitada; "
+            "não dá para afirmar meação, citação nem ocupação"
+        )
+    if riscos.get("datajud") in ("nao_encontrado", "indisponivel"):
+        motivos.append("DataJud não trouxe movimentos deste processo — citação não confirmada")
     if not notas:
         return None, motivos
     return min(notas), motivos
