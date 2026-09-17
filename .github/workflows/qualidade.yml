@@ -1,0 +1,26 @@
+name: qualidade
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar
+        run: pip install -r requirements.txt
+      - name: Compilar
+        run: python -m compileall -q app
+      - name: Testes
+        run: |
+          if [ -f test_criteria.py ]; then python test_criteria.py; fi
