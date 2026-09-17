@@ -33,6 +33,15 @@ RE_OCUPADO = re.compile(r"\bocupad[oa]\b", re.I)
 RE_DESOCUPADO = re.compile(r"\b(?:des|não\s+)ocupad[oa]|\blivre\b|\bvazi[oa]\b", re.I)
 RE_DIVIDA = re.compile(r"d[ií]vida|d[eé]bito|em atraso|inadimpl[êe]nc", re.I)
 RE_PRACA = re.compile(r"(\d)\s*[ªa]\s*pra[çc]a", re.I)
+RE_CONDO_MENCAO = re.compile(
+    r"condom[ií]nio.{0,40}(?:atraso|d[eé]bito|inadimpl|dívida)|"
+    r"(?:d[eé]bito|dívida|atraso).{0,30}condom",
+    re.I,
+)
+RE_PRECISA_CONDO = re.compile(
+    r"apartamento|cobertura|kitnet|\bflat\b|condom[ií]nio",
+    re.I,
+)
 
 FONTE_MERCADO = "mercado"
 FONTE_LAUDO = "laudo"
@@ -43,15 +52,35 @@ def _brl(value: float) -> str:
     return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def _total_dividas(dividas: Optional[dict[str, Any]]) -> float:
+def _money_key(dividas: Optional[dict[str, Any]], key: str) -> float:
     if not isinstance(dividas, dict):
         return 0.0
-    total = 0.0
-    for key in ("iptu", "condominio"):
-        raw = dividas.get(key)
-        if isinstance(raw, (int, float)) and raw > 0:
-            total += float(raw)
-    return total
+    raw = dividas.get(key)
+    if isinstance(raw, (int, float)) and raw > 0:
+        return float(raw)
+    return 0.0
+
+
+def _lance_inicial(current_bid: Optional[float], minimum_bid: Optional[float]) -> Optional[float]:
+    if minimum_bid is not None and minimum_bid > 0:
+        return minimum_bid
+    if current_bid is not None and current_bid > 0:
+        return current_bid
+    return None
+
+
+def _lance_atual(current_bid: Optional[float], minimum_bid: Optional[float]) -> Optional[float]:
+    if current_bid is not None and current_bid > 0:
+        return current_bid
+    if minimum_bid is not None and minimum_bid > 0:
+        return minimum_bid
+    return None
+
+
+def _precisa_condo(tipo: Optional[str], blob: str) -> bool:
+    if (tipo or "").lower() in ("apartamento", "sala"):
+        return True
+    return bool(RE_PRECISA_CONDO.search(blob))
 
 
 def _fator_desconto(
@@ -61,8 +90,8 @@ def _fator_desconto(
     valor_mercado_estimado: Optional[float],
     fonte_avaliacao: Optional[str] = None,
 ) -> tuple[Optional[float], Optional[str], Optional[str]]:
-    """nota, detalhe, fonte usada (mercado/laudo/venal_imovel)."""
-    lance = current_bid if current_bid is not None else minimum_bid
+    """Desconto pelo lance inicial. Lance atual acima do inicial não penaliza."""
+    lance = _lance_inicial(current_bid, minimum_bid)
     if lance is None or lance <= 0:
         return None, None, None
     if valor_mercado_estimado and valor_mercado_estimado > 0:
@@ -80,14 +109,62 @@ def _fator_desconto(
     desconto_pct = (referencia - lance) / referencia
     if fonte == FONTE_VENAL and desconto_pct < 0:
         detalhe = (
-            f"lance acima do valor venal do imóvel ({_brl(referencia)}); "
+            f"lance inicial acima do valor venal do imóvel ({_brl(referencia)}); "
             "venal de IPTU não é preço de mercado — não conta como overpay"
         )
         return None, detalhe, fonte
     nota = max(-1.0, min(1.0, desconto_pct / 0.5))  # 50% de desconto satura a nota
     sinal = "abaixo" if desconto_pct >= 0 else "acima"
-    detalhe = f"{abs(desconto_pct) * 100:.0f}% {sinal} da {rotulo}"
+    pelo = " (pelo lance inicial)" if (
+        current_bid and minimum_bid and current_bid > minimum_bid * 1.05
+    ) else ""
+    detalhe = f"{abs(desconto_pct) * 100:.0f}% {sinal} da {rotulo}{pelo}"
     return nota, detalhe, fonte
+
+
+def _alerta_lance_vs_avaliacao(
+    current_bid: Optional[float],
+    minimum_bid: Optional[float],
+    reference_value: Optional[float],
+    valor_mercado_estimado: Optional[float],
+    fonte_avaliacao: Optional[str] = None,
+) -> Optional[str]:
+    atual = _lance_atual(current_bid, minimum_bid)
+    if atual is None:
+        return None
+    if valor_mercado_estimado and valor_mercado_estimado > 0:
+        referencia, rotulo = valor_mercado_estimado, "referência de mercado"
+    elif reference_value and reference_value > 0:
+        fonte = fonte_avaliacao if fonte_avaliacao in (FONTE_LAUDO, FONTE_VENAL) else FONTE_LAUDO
+        rotulo = "valor venal do imóvel (IPTU)" if fonte == FONTE_VENAL else "avaliação"
+        referencia = reference_value
+    else:
+        return None
+    pct = (referencia - atual) / referencia
+    inicial = _lance_inicial(current_bid, minimum_bid)
+    subiu = bool(inicial and atual > inicial * 1.05)
+    if pct >= 0.08 and not subiu:
+        return None
+    if pct >= 0.08:
+        return f"lance atual {_brl(atual)} ainda {pct * 100:.0f}% abaixo da {rotulo}"
+    if pct >= 0:
+        return f"lance atual {_brl(atual)} já encosta na {rotulo}"
+    return f"atenção: lance atual {_brl(atual)} está {abs(pct) * 100:.0f}% acima da {rotulo}"
+
+
+def _motivo_concorrencia(
+    current_bid: Optional[float],
+    minimum_bid: Optional[float],
+) -> Optional[str]:
+    inicial = minimum_bid if minimum_bid and minimum_bid > 0 else None
+    atual = current_bid if current_bid and current_bid > 0 else None
+    if not inicial or not atual or atual <= inicial * 1.05:
+        return None
+    pct = (atual - inicial) / inicial * 100
+    return (
+        f"lance atual {pct:.0f}% acima do inicial — concorrência por oportunidade, "
+        "não é ponto negativo"
+    )
 
 
 def _fator_risco(
@@ -116,23 +193,64 @@ def _fator_divida(
     dividas: Optional[dict[str, Any]] = None,
     current_bid: Optional[float] = None,
     minimum_bid: Optional[float] = None,
-) -> tuple[float, str]:
-    lance = current_bid if current_bid is not None else minimum_bid
-    total = _total_dividas(dividas)
-    if tem_divida is False and total <= 0:
-        return 0.4, "sem débitos relevantes no edital"
-    if total > 0 and lance and lance > 0:
-        ratio = total / lance
-        detalhe = f"débitos {_brl(total)} ({ratio * 100:.1f}% do lance)"
+    tipo: Optional[str] = None,
+) -> tuple[float, Optional[str]]:
+    """Condomínio pesa (não se abate). IPTU em leilão judicial em geral é abatido."""
+    lance = _lance_inicial(current_bid, minimum_bid)
+    condo = _money_key(dividas, "condominio")
+    iptu = _money_key(dividas, "iptu")
+    mencao_condo = bool(
+        (isinstance(dividas, dict) and dividas.get("mencao_condominio"))
+        or RE_CONDO_MENCAO.search(blob)
+    )
+    precisa = _precisa_condo(tipo, blob)
+    iptu_txt = (
+        f"IPTU {_brl(iptu)} em geral é abatido na arrematação — não pesa no custo"
+        if iptu > 0
+        else None
+    )
+
+    if condo > 0 and lance and lance > 0:
+        ratio = condo / lance
+        detalhe = (
+            f"condomínio {_brl(condo)} ({ratio * 100:.1f}% do lance) — "
+            "não se abate na arrematação"
+        )
+        if iptu_txt:
+            detalhe = f"{detalhe}. {iptu_txt}"
         if ratio < 0.01:
-            return 0.2, detalhe + " — impacto baixo no lance"
+            return 0.15, detalhe + " (impacto baixo no lance)"
         if ratio < 0.05:
-            return -0.2, detalhe
+            return -0.25, detalhe
         if ratio < 0.15:
-            return -0.6, detalhe + " — peso relevante no custo"
+            return -0.7, detalhe + " — peso relevante no custo"
         return -1.0, detalhe + " — dívida alta frente ao lance"
-    if tem_divida is True or (tem_divida is None and RE_DIVIDA.search(blob)):
-        return -0.35, "menção de dívida/débito sem valor consolidado"
+
+    if mencao_condo:
+        detalhe = "menção de débito condominial sem valor consolidado — não se abate na arrematação"
+        if iptu_txt:
+            detalhe = f"{detalhe}. {iptu_txt}"
+        return -0.45, detalhe
+
+    if precisa and condo <= 0 and tem_divida is not False:
+        detalhe = (
+            "apartamento/casa em condomínio — conferir débitos condominiais "
+            "(não se abatem na arrematação)"
+        )
+        if iptu_txt:
+            detalhe = f"{detalhe}. {iptu_txt}"
+        return -0.2, detalhe
+
+    if iptu_txt:
+        return 0.2, iptu_txt
+
+    if tem_divida is False:
+        return 0.4, "sem débitos de condomínio no edital"
+
+    if tem_divida is True or RE_DIVIDA.search(blob):
+        if re.search(r"\biptu\b", blob, re.I) and not mencao_condo:
+            return 0.2, "menção de IPTU — em leilão judicial costuma ser abatido, não pesa"
+        return -0.2, "menção de dívida sem distinguir condomínio/IPTU"
     return 0.0, None
 
 
@@ -243,6 +361,7 @@ def compute_score(
     avaliacao_data: Optional[Any] = None,
     avaliacao_data_origem: Optional[str] = None,
     hoje: Optional[date] = None,
+    tipo: Optional[str] = None,
 ) -> dict[str, Any]:
     blob = f"{title} {description or ''}"
 
@@ -253,6 +372,14 @@ def compute_score(
         valor_mercado_estimado,
         fonte_avaliacao,
     )
+    alerta_lance = _alerta_lance_vs_avaliacao(
+        current_bid,
+        minimum_bid,
+        reference_value,
+        valor_mercado_estimado,
+        fonte_avaliacao,
+    )
+    concorrencia = _motivo_concorrencia(current_bid, minimum_bid)
     nota_risco, detalhe_risco = _fator_risco(blob, ocupacao=ocupacao)
     nota_divida, detalhe_divida = _fator_divida(
         blob,
@@ -260,6 +387,7 @@ def compute_score(
         dividas=dividas,
         current_bid=current_bid,
         minimum_bid=minimum_bid,
+        tipo=tipo,
     )
     nota_idade, detalhe_idade = _fator_idade(
         avaliacao_data, origem=avaliacao_data_origem, hoje=hoje
@@ -285,6 +413,8 @@ def compute_score(
         d
         for d in (
             detalhe_desconto,
+            alerta_lance,
+            concorrencia,
             detalhe_risco,
             detalhe_divida,
             detalhe_idade,
