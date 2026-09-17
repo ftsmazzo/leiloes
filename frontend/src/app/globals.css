@@ -45,9 +45,173 @@ a {
 }
 
 .site-main {
-  padding: 1.5rem 2rem;
-  max-width: 1120px;
+  padding: 1.25rem 1.5rem 2rem;
+  max-width: 1280px;
   margin: 0 auto;
+}
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.kpi {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.7rem 0.9rem;
+}
+
+.kpi span {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.kpi strong {
+  font-size: 1.15rem;
+}
+
+.btn-secondary {
+  background: var(--card);
+  color: var(--ink);
+}
+
+.table-wrap {
+  overflow: auto;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.grid th,
+.grid td {
+  text-align: left;
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.grid th {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-weight: 600;
+  background: #fafaf8;
+}
+
+.lot-cell {
+  display: flex;
+  gap: 0.65rem;
+  min-width: 18rem;
+}
+
+.lot-cell img {
+  width: 56px;
+  height: 42px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: #ecece8;
+  flex: 0 0 auto;
+}
+
+.lot-cell strong {
+  display: block;
+  font-size: 0.9rem;
+}
+
+.row-links {
+  margin-top: 0.25rem;
+  display: flex;
+  gap: 0.75rem;
+  font-size: 0.8rem;
+}
+
+.table-skel {
+  min-height: 12rem;
+}
+
+.lot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.85rem;
+}
+
+.lot-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: card-in var(--motion) var(--ease);
+}
+
+.lot-card-photo {
+  width: 100%;
+  height: 140px;
+  object-fit: cover;
+  background: #ecece8;
+}
+
+.lot-card-body {
+  padding: 0.85rem 1rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  flex: 1;
+}
+
+.lot-card-body h2 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.3;
+}
+
+.lot-dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 6.5rem 1fr;
+  gap: 0.2rem 0.6rem;
+  font-size: 0.8125rem;
+}
+
+.lot-dl dt {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.lot-dl dd {
+  margin: 0;
+}
+
+.lot-card-link {
+  margin-top: auto;
+  padding-top: 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 800px) {
+  .kpis {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 .toolbar {
@@ -200,8 +364,9 @@ a {
 }
 
 .skel {
-  min-height: 5.5rem;
+  min-height: 11rem;
   background: #ecece8;
+  animation: none;
 }
 
 .sr-only {
@@ -218,7 +383,9 @@ a {
 
 @media (prefers-reduced-motion: reduce) {
   .tab,
-  .btn {
+  .btn,
+  .lot-card {
     transition: none;
+    animation: none;
   }
 }

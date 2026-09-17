@@ -12,7 +12,7 @@ def _lot(**kwargs):
         category="Imóvel",
         current_bid=150000,
         minimum_bid=150000,
-        raw_data='{"cidade": "Sertãozinho"}',
+        raw_data='{"cidade": "Sertãozinho", "tipo": "casa"}',
     )
     defaults.update(kwargs)
     return SimpleNamespace(**defaults)
@@ -49,6 +49,30 @@ def test_teto_skips_lot_without_bid():
     assert lot_matches(lot)
 
 
+def test_tipo_imovel_matches_casa_and_apartamento():
+    casa = _lot()
+    apto = _lot(title="Apartamento 2 dormitórios — Ribeirão Preto/SP", category="Apartamento", raw_data='{"cidade": "Ribeirão Preto", "tipo": "apartamento"}')
+    assert lot_matches(casa, tipo="imovel")
+    assert lot_matches(apto, tipo="imovel")
+    assert lot_matches(apto, tipo="apartamento")
+    assert not lot_matches(casa, tipo="terreno")
+
+
+def test_q_matches_endereco():
+    lot = _lot(raw_data='{"cidade": "Sertãozinho", "endereco": "Rua das Flores, 100"}')
+    assert lot_matches(lot, q="flores")
+    assert not lot_matches(lot, q="Jaboticabal")
+
+
+def test_tipo_ignores_title_dump():
+    honda = _lot(title="Honda CG 160", category=None, raw_data="{}")
+    assert lot_matches(honda, tipo="veiculo")
+    assert not lot_matches(honda, tipo="casa")
+    fronhas = _lot(title="3.400 Fronhas marca Capri", category="Diversos", raw_data="{}")
+    assert not lot_matches(fronhas, tipo="sala")
+    assert not lot_matches(fronhas, tipo="imovel")
+
+
 def test_filter_lots_combines_criteria():
     lots = [
         _lot(title="Casa em Sertãozinho/SP", raw_data='{"cidade": "Sertãozinho"}', current_bid=150000),
@@ -69,5 +93,8 @@ if __name__ == "__main__":
     test_cidade_ignores_description_and_uses_title_fallback()
     test_tipo_and_teto()
     test_teto_skips_lot_without_bid()
+    test_tipo_imovel_matches_casa_and_apartamento()
+    test_q_matches_endereco()
+    test_tipo_ignores_title_dump()
     test_filter_lots_combines_criteria()
     print("ok")

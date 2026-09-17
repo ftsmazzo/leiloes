@@ -8,8 +8,9 @@ from app.models.database import get_db
 from app.models.schemas import AuctionModel, LotModel
 from app.api.schemas import AuctionOut, AuctionDetailOut, LotOut
 from app.api.present import lot_to_out
-from app.search import filter_lots
+from app.search import cidade_of, filter_lots, tipo_of
 from app.scrapers.registry import source_names
+from app.scrapers.extract import extract_status
 
 router = APIRouter(prefix="/api", tags=["api"])
 
@@ -24,6 +25,8 @@ async def list_auctions(
     q = select(AuctionModel).order_by(AuctionModel.updated_at.desc()).limit(limit).offset(offset)
     if source:
         q = q.where(AuctionModel.source == source)
+    else:
+        q = q.where(AuctionModel.source != "demo")
     result = await db.execute(q)
     auctions = result.scalars().all()
     out = []
@@ -74,71 +77,117 @@ async def list_lots(
     auction_id: Optional[int] = Query(None),
     source: Optional[str] = Query(None),
     cidade: Optional[str] = Query(None, description="Cidade gravada pelo scraper (raw_data/título)"),
-    tipo: Optional[str] = Query(None, description="Casa, terreno, imóvel — casa com category/título"),
+    tipo: Optional[str] = Query(None, description="casa, apartamento, terreno, imovel…"),
     teto: Optional[float] = Query(None, ge=0, description="Lance atual ou mínimo até este valor"),
-    limit: int = Query(50, le=100),
+    q: Optional[str] = Query(None, description="Texto livre em título, endereço e cidade"),
+    limit: int = Query(80, le=200),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
     cidade = cidade.strip() if cidade else None
     tipo = tipo.strip() if tipo else None
-    q = (
+    q_txt = q.strip() if q else None
+    stmt = (
         select(LotModel, AuctionModel.source)
         .join(AuctionModel, LotModel.auction_id == AuctionModel.id)
         .order_by(LotModel.updated_at.desc())
     )
     if auction_id:
-        q = q.where(LotModel.auction_id == auction_id)
+        stmt = stmt.where(LotModel.auction_id == auction_id)
     if source:
-        q = q.where(AuctionModel.source == source)
+        stmt = stmt.where(AuctionModel.source == source)
+    else:
+        stmt = stmt.where(AuctionModel.source != "demo")
     if teto is not None:
-        q = q.where(
+        stmt = stmt.where(
             or_(
                 LotModel.current_bid <= teto,
                 and_(LotModel.current_bid.is_(None), LotModel.minimum_bid <= teto),
             )
         )
-    text_filter = bool(cidade or tipo)
+    text_filter = bool(cidade or tipo or q_txt)
     if not text_filter:
-        q = q.limit(limit).offset(offset)
-    result = await db.execute(q)
+        stmt = stmt.limit(limit).offset(offset)
+    result = await db.execute(stmt)
     rows = list(result.all())
     if text_filter:
         lots_only = [row[0] for row in rows]
-        kept_ids = {lot.id for lot in filter_lots(lots_only, cidade=cidade, tipo=tipo)}
+        kept_ids = {lot.id for lot in filter_lots(lots_only, cidade=cidade, tipo=tipo, q=q_txt)}
         rows = [row for row in rows if row[0].id in kept_ids]
         rows = rows[offset : offset + limit]
     return [lot_to_out(lot, src) for lot, src in rows]
 
 
+@router.get("/facets")
+async def facets(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(LotModel, AuctionModel.source)
+        .join(AuctionModel, LotModel.auction_id == AuctionModel.id)
+        .where(AuctionModel.source != "demo")
+    )
+    rows = list(result.all())
+    cidades: dict[str, int] = {}
+    tipos: dict[str, int] = {}
+    by_source: dict[str, int] = {}
+    with_city = 0
+    for lot, src in rows:
+        by_source[src] = by_source.get(src, 0) + 1
+        cidade = cidade_of(lot)
+        if cidade:
+            with_city += 1
+            cidades[cidade] = cidades.get(cidade, 0) + 1
+        tipo = tipo_of(lot)
+        if not tipo:
+            continue
+        tipos[tipo] = tipos.get(tipo, 0) + 1
+    return {
+        "total_lots": len(rows),
+        "with_cidade": with_city,
+        "by_source": by_source,
+        "cidades": sorted(cidades.items(), key=lambda kv: (-kv[1], kv[0])),
+        "tipos": sorted(tipos.items(), key=lambda kv: (-kv[1], kv[0])),
+        "extract": extract_status(),
+    }
+
+
 @router.get("/sources")
 async def list_sources():
-    labels = {"calil": "Calil", "vegas": "Vegas", "zuk": "Zuk", "mega": "Mega", "lance": "Grupo Lance", "demo": "Demo"}
+    labels = {
+        "calil": "Calil",
+        "vegas": "Vegas",
+        "zuk": "Zuk",
+        "mega": "Mega",
+        "lance": "Grupo Lance",
+        "demo": "Demo",
+    }
     return [{"id": name, "label": labels.get(name, name.title())} for name in source_names()]
 
 
 @router.get("/stats")
 async def stats(db: AsyncSession = Depends(get_db)):
-    """Total de leilões e lotes para o dashboard."""
-    r_auctions = await db.execute(select(func.count(AuctionModel.id)))
-    r_lots = await db.execute(select(func.count(LotModel.id)))
+    r_auctions = await db.execute(select(func.count(AuctionModel.id)).where(AuctionModel.source != "demo"))
+    r_lots = await db.execute(
+        select(func.count(LotModel.id))
+        .join(AuctionModel, LotModel.auction_id == AuctionModel.id)
+        .where(AuctionModel.source != "demo")
+    )
     return {
         "total_auctions": r_auctions.scalar() or 0,
         "total_lots": r_lots.scalar() or 0,
+        "extract": extract_status(),
     }
 
 
 @router.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "extract": extract_status()}
 
 
 @router.post("/run-scrape")
 async def run_scrape():
     """
-    Dispara a execução de todos os scrapers registrados e persiste no banco.
+    Dispara a execução de todos os scrapers (Calil, Vegas) e persiste no banco.
     Use para validar o primeiro scrape ou atualizar dados manualmente.
-    Pode demorar alguns segundos.
     """
     from app.scrapers.run_all import run_all
     summary = await run_all()

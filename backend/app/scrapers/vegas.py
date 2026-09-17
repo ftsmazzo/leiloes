@@ -1,11 +1,10 @@
 """
-Vegas Leilões — páginas públicas.
-Listagem /leiloes (em andamento). Lotes em /leilao/{id}/lotes.
+Vegas Leilões — páginas públicas Soleon.
+Listagem /leiloes. Lotes em /leilao/{id}/lotes. Detalhe /item/{id}/detalhes se faltar cidade/endereço.
 Sem login. Parser coberto por fixture — CI não bate no site.
 """
 from __future__ import annotations
 
-import json
 import re
 from datetime import datetime
 from typing import Optional
@@ -15,32 +14,18 @@ import httpx
 from bs4 import BeautifulSoup, Tag
 
 from .base import BaseScraper, ScrapedAuction, ScrapedLot
+from .extract import parse_br_currency
+from .soleon import (
+    HEADERS,
+    RE_LEILAO,
+    _href,
+    lots_from_lotes_page,
+    merge_lot,
+    needs_detail,
+    parse_item_detail,
+)
 
-RE_CIDADE_LABEL = re.compile(r"Cidade:\s*([^\n<]+)", re.I)
-RE_ITEM = re.compile(r"/item/(\d+)/detalhes")
-RE_LEILAO = re.compile(r"/leilao/(\d+)/lotes")
 RE_DATE = re.compile(r"(\d{2}/\d{2}/\d{4})\s*(?:às|as)?\s*(\d{2}:\d{2})?", re.I)
-RE_LANCE_LABEL = re.compile(r"Lance Inicial[^R$]*R\$\s*([\d.,]+)", re.I)
-
-
-def _href(tag: Tag) -> str:
-    raw = tag.get("href")
-    if isinstance(raw, list):
-        raw = raw[0] if raw else ""
-    return raw if isinstance(raw, str) else ""
-
-
-def parse_br_currency(s: str) -> Optional[float]:
-    if not s:
-        return None
-    s = re.sub(r"[^\d,.-]", "", str(s))
-    if not s:
-        return None
-    s = s.replace(".", "").replace(",", ".")
-    try:
-        return float(s)
-    except ValueError:
-        return None
 
 
 def parse_vegas_date(s: str) -> Optional[datetime]:
@@ -58,21 +43,9 @@ def parse_vegas_date(s: str) -> Optional[datetime]:
 
 
 def cidade_from_vegas(*parts: str | None) -> str | None:
-    blob = " ".join(p for p in parts if p)
-    labeled = RE_CIDADE_LABEL.search(blob)
-    if labeled:
-        name = re.sub(r"\s+", " ", labeled.group(1)).split("/")[0].strip(" -,")
-        return name or None
-    idx = re.search(r"/\s*SP\b", blob, re.I)
-    if not idx:
-        return None
-    head = blob[: idx.start()].strip()
-    chunk = re.split(r"\s+[—–]\s+", head)[-1].strip()
-    chunk = re.sub(r"^(?:.*\s)?(?:em|no|na)\s+", "", chunk, flags=re.I)
-    chunk = re.sub(r"\s+", " ", chunk).strip(" -,")
-    if 2 < len(chunk) <= 40:
-        return chunk
-    return None
+    from .extract import cidade_from_text
+
+    return cidade_from_text(*parts)
 
 
 class VegasScraper(BaseScraper):
@@ -83,11 +56,8 @@ class VegasScraper(BaseScraper):
         auctions: list[ScrapedAuction] = []
         seen_ids: set[str] = set()
 
-        async with httpx.AsyncClient(
-            timeout=30.0,
-            follow_redirects=True,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0"},
-        ) as client:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers=HEADERS) as client:
+            await client.get(self.base_url)
             r = await client.get(f"{self.base_url}/leiloes")
             r.raise_for_status()
             for auction in self.auctions_from_html(r.text):
@@ -96,6 +66,7 @@ class VegasScraper(BaseScraper):
                 seen_ids.add(auction.external_id)
                 auctions.append(auction)
 
+            detail_left = 25
             for auction in auctions:
                 if not auction.external_id.isdigit():
                     continue
@@ -103,10 +74,26 @@ class VegasScraper(BaseScraper):
                 try:
                     r = await client.get(lotes_url)
                     r.raise_for_status()
-                    auction.lots = self.lots_from_html(r.text)
+                    auction.lots = lots_from_lotes_page(r.text, self.base_url)
                 except Exception as exc:
                     print(f"Vegas lotes {auction.external_id}: {exc}")
                     auction.lots = []
+                if detail_left <= 0:
+                    continue
+                missing = [lot for lot in auction.lots if needs_detail(lot)]
+                for lot in missing:
+                    if detail_left <= 0:
+                        break
+                    try:
+                        det = await client.get(f"{self.base_url}/item/{lot.external_id}/detalhes")
+                        det.raise_for_status()
+                        parsed = parse_item_detail(det.text, self.base_url, lot.external_id)
+                        filled = merge_lot(lot, parsed)
+                        idx = auction.lots.index(lot)
+                        auction.lots[idx] = filled
+                        detail_left -= 1
+                    except Exception as exc:
+                        print(f"Vegas detalhe {lot.external_id}: {exc}")
 
         return auctions
 
@@ -120,25 +107,7 @@ class VegasScraper(BaseScraper):
         return result
 
     def lots_from_html(self, html: str) -> list[ScrapedLot]:
-        soup = BeautifulSoup(html, "html.parser")
-        groups: dict[str, list[Tag]] = {}
-        order: list[str] = []
-        for a in soup.select('a[href*="/item/"]'):
-            href = _href(a)
-            m = RE_ITEM.search(href)
-            if not m:
-                continue
-            external_id = m.group(1)
-            if external_id not in groups:
-                groups[external_id] = []
-                order.append(external_id)
-            groups[external_id].append(a)
-        result: list[ScrapedLot] = []
-        for external_id in order:
-            lot = self._anchors_to_lot(external_id, groups[external_id])
-            if lot:
-                result.append(lot)
-        return result
+        return lots_from_lotes_page(html, self.base_url)
 
     def _card_to_auction(self, card: Tag) -> Optional[ScrapedAuction]:
         label = card.select_one(".label_leilao")
@@ -175,39 +144,4 @@ class VegasScraper(BaseScraper):
             starts_at=starts_at,
             ends_at=None,
             lots=[],
-        )
-
-    def _anchors_to_lot(self, external_id: str, anchors: list[Tag]) -> Optional[ScrapedLot]:
-        href = _href(anchors[0])
-        full_url = urljoin(self.base_url, href.split("?")[0])
-        title = ""
-        lance = None
-        texts: list[str] = []
-        for a in anchors:
-            texts.append(a.get_text(" ", strip=True))
-            h5 = a.select_one("h5")
-            if h5 and not title:
-                candidate = h5.get_text(strip=True)
-                if candidate and not re.match(r"Lance Inicial\b", candidate, re.I):
-                    title = candidate
-            h4 = a.select_one("h4.mb-0")
-            if h4 and lance is None and "R$" in (h4.get_text() or ""):
-                lance = parse_br_currency(h4.get_text())
-        blob = " ".join(filter(None, texts))
-        if lance is None:
-            labeled = RE_LANCE_LABEL.search(blob)
-            if labeled:
-                lance = parse_br_currency(labeled.group(1))
-        cidade = cidade_from_vegas(blob, title)
-        extra = {"cidade": cidade} if cidade else {}
-        return ScrapedLot(
-            external_id=external_id,
-            title=(title or f"Lote {external_id}")[:512],
-            description=blob[:2000] if blob else None,
-            category=None,
-            minimum_bid=lance,
-            current_bid=lance,
-            reference_value=None,
-            url=full_url,
-            raw_data=json.dumps(extra, ensure_ascii=False) if extra else None,
         )

@@ -12,7 +12,14 @@ class LotOut(BaseModel):
     title: str
     description: Optional[str] = None
     category: Optional[str] = None
+    tipo: Optional[str] = None
+    headline: Optional[str] = None
     cidade: Optional[str] = None
+    bairro: Optional[str] = None
+    endereco: Optional[str] = None
+    matricula: Optional[str] = None
+    area: Optional[str] = None
+    foto: Optional[str] = None
     minimum_bid: Optional[float] = None
     current_bid: Optional[float] = None
     reference_value: Optional[float] = None

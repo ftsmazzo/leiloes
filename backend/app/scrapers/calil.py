@@ -1,6 +1,7 @@
 """
-Calil via Superbid Exchange (loja 818).
-Página pública. Sem login. Parser coberto por fixture — CI não bate no site.
+Calil Leilões — site próprio (Soleon), não Superbid Exchange.
+A loja Superbid 818 está sem ofertas abertas; o catálogo vivo é calilleiloes.com.br.
+Parser coberto por fixture — CI não bate no site.
 """
 from __future__ import annotations
 
@@ -12,108 +13,69 @@ import httpx
 from bs4 import BeautifulSoup
 
 from .base import BaseScraper, ScrapedAuction, ScrapedLot
+from .extract import cidade_from_text, extra_json, parse_br_currency, tipo_from_text
+from .soleon import HEADERS, lots_from_imovel_list, lots_from_leiloes_cards
 
 RE_LANCE_ATUAL = re.compile(r"Lance\s+atual:\s*R\$\s*([\d.,]+)", re.I)
 
-
-def _as_text(value: Any) -> str:
-    if isinstance(value, str):
-        return value.strip()
-    if isinstance(value, dict):
-        for key in ("name", "title", "description", "city"):
-            inner = value.get(key)
-            if isinstance(inner, str) and inner.strip():
-                return inner.strip()
-    return ""
-
-
-def cidade_from_text(*parts: Any, allow_bare: bool = False) -> str | None:
-    """Cidade/SP no título; nome nu só com allow_bare (city/cityName)."""
-    for part in parts:
-        text = _as_text(part)
-        if not text:
-            continue
-        idx = re.search(r"/\s*SP\b", text, re.I)
-        if idx:
-            head = text[: idx.start()].strip()
-            chunk = re.split(r"\s+[—–]\s+", head)[-1].strip()
-            chunk = re.sub(r"^(?:.*\s)?(?:em|no|na)\s+", "", chunk, flags=re.I)
-            chunk = re.sub(r"\s+", " ", chunk).strip(" -,")
-            if 2 < len(chunk) <= 40:
-                return chunk
-            continue
-        if allow_bare and "/" not in text and 2 < len(text) <= 40:
-            return text
-    return None
-
-
-def parse_br_currency(s: str) -> Optional[float]:
-    if not s:
-        return None
-    s = re.sub(r"[^\d,.-]", "", str(s))
-    if not s:
-        return None
-    s = s.replace(".", "").replace(",", ".")
-    try:
-        return float(s)
-    except ValueError:
-        return None
+# reexport para testes e present.py
+__all__ = ["CalilScraper", "cidade_from_text"]
 
 
 class CalilScraper(BaseScraper):
     source_name = "calil"
-    base_url = "https://exchange.superbid.net"
-    loja_url = "https://exchange.superbid.net/loja-oficial/calil-leiloes-818"
+    base_url = "https://www.calilleiloes.com.br"
 
     async def scrape(self) -> list[ScrapedAuction]:
-        all_lots: list[ScrapedLot] = []
-        page = 1
-        page_size = 30
-
-        async with httpx.AsyncClient(
-            timeout=25.0,
-            follow_redirects=True,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0"},
-        ) as client:
-            while True:
-                url = (
-                    f"{self.loja_url}?filter=statusId:1;stores.id:818"
-                    f"&searchType=opened&pageNumber={page}&pageSize={page_size}&orderBy=price:desc"
-                )
+        by_id: dict[str, ScrapedLot] = {}
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers=HEADERS) as client:
+            await client.get(self.base_url)
+            page = 1
+            while page <= 12:
+                url = f"{self.base_url}/lotes/imovel?tipo=imovel&page={page}"
                 try:
                     r = await client.get(url)
                     r.raise_for_status()
-                    html = r.text
                 except Exception:
                     break
-
-                lots = self.lots_from_html(html)
-                if not lots:
-                    break
-                all_lots.extend(lots)
-                if len(lots) < page_size:
+                found = lots_from_imovel_list(r.text, self.base_url)
+                new = 0
+                for lot in found:
+                    if lot.external_id not in by_id:
+                        by_id[lot.external_id] = lot
+                        new += 1
+                if not found or new == 0:
                     break
                 page += 1
-                if page > 10:
-                    break
+            try:
+                listing = await client.get(f"{self.base_url}/leiloes")
+                listing.raise_for_status()
+                for lot in lots_from_leiloes_cards(listing.text, self.base_url):
+                    if lot.external_id not in by_id:
+                        by_id[lot.external_id] = lot
+            except Exception:
+                pass
 
-        if not all_lots:
+        lots = list(by_id.values())
+        if not lots:
             return []
         return [
             ScrapedAuction(
-                external_id="calil-superbid-818",
+                external_id="calil-abertos",
                 source=self.source_name,
-                title="Calil Leilões (Superbid Exchange)",
-                url=self.loja_url,
-                description=f"{len(all_lots)} ofertas abertas",
-                starts_at=None,
-                ends_at=None,
-                lots=all_lots,
+                title="Calil Leilões — lotes em andamento",
+                url=f"{self.base_url}/lotes/imovel",
+                description=f"{len(lots)} lote(s) públicos",
+                lots=lots,
             )
         ]
 
     def lots_from_html(self, html: str) -> list[ScrapedLot]:
-        lots = self._parse_next_data(html)
+        lots = lots_from_imovel_list(html, self.base_url)
+        if not lots:
+            lots = lots_from_leiloes_cards(html, self.base_url)
+        if not lots:
+            lots = self._parse_next_data(html)
         if not lots:
             lots = self._parse_oferta_links(html)
         return lots
@@ -136,9 +98,11 @@ class CalilScraper(BaseScraper):
             page_props = {}
         data_block = page_props.get("data") if isinstance(page_props.get("data"), dict) else {}
         search = page_props.get("searchResult") if isinstance(page_props.get("searchResult"), dict) else {}
+        offers_list = page_props.get("offersList") if isinstance(page_props.get("offersList"), dict) else {}
         offers = (
             page_props.get("initialOffers")
             or page_props.get("offers")
+            or offers_list.get("offers")
             or data_block.get("offers")
             or search.get("offers")
             or []
@@ -174,7 +138,7 @@ class CalilScraper(BaseScraper):
                 if found:
                     return found
         if isinstance(obj, dict):
-            for k in ("offers", "items", "data", "initialOffers", "searchResult"):
+            for k in ("offers", "items", "data", "initialOffers", "searchResult", "offersList"):
                 found = self._find_offers_in_json(obj.get(k) or [], depth + 1)
                 if found:
                     return found
@@ -182,36 +146,58 @@ class CalilScraper(BaseScraper):
 
     def _offer_item_to_lot(self, item: dict[str, Any]) -> Optional[ScrapedLot]:
         offer_id = str(item.get("id") or item.get("offerId") or item.get("productId") or "")
-        title = _as_text(item.get("title") or item.get("name") or item.get("description"))[:512]
+        title = (item.get("title") or item.get("name") or item.get("description") or "")
+        if isinstance(title, dict):
+            title = title.get("name") or ""
+        title = str(title).strip()[:512]
         if not title and not offer_id:
             return None
-        friendly_url = _as_text(item.get("friendlyUrl") or item.get("slug"))
-        url = f"{self.base_url}/oferta/{friendly_url}" if friendly_url else None
+        product = item.get("product") if isinstance(item.get("product"), dict) else {}
+        loc = product.get("location") if isinstance(product.get("location"), dict) else {}
+        city_raw = loc.get("city") if isinstance(loc, dict) else None
+        cidade = cidade_from_text(title, item.get("description"), city_raw, allow_bare=False)
+        if not cidade:
+            cidade = cidade_from_text(item.get("city"), item.get("cityName"), city_raw, allow_bare=True)
+        sub = product.get("subCategory") if isinstance(product.get("subCategory"), dict) else item.get("subCategory")
+        category = item.get("category") if isinstance(item.get("category"), str) else None
+        if not category and isinstance(sub, dict):
+            category = sub.get("description")
+        if not category:
+            ptype = product.get("productType") if isinstance(product.get("productType"), dict) else None
+            if isinstance(ptype, dict):
+                category = ptype.get("description")
+        tipo = tipo_from_text(title, category)
+        extra = extra_json({"cidade": cidade, "tipo": tipo})
+        desc = None
+        if isinstance(item.get("description"), str):
+            desc = item.get("description")
+        elif isinstance(product.get("shortDesc"), str):
+            desc = product.get("shortDesc")
+        url = None
+        friendly_url = item.get("friendlyUrl") or item.get("slug")
+        if isinstance(friendly_url, str) and friendly_url.strip():
+            url = f"https://exchange.superbid.net/oferta/{friendly_url.strip()}"
+        elif offer_id:
+            url = f"{self.base_url}/item/{offer_id}/detalhes"
         price = _price_from_item(item)
         evaluation = item.get("evaluationValue") or item.get("referenceValue")
         if isinstance(evaluation, str):
             evaluation = parse_br_currency(evaluation)
-        category = item.get("category")
-        sub = item.get("subCategory")
-        if not isinstance(category, str) and isinstance(sub, dict):
-            category = sub.get("description")
-        if not isinstance(category, str):
-            category = None
-        cidade = cidade_from_text(title, item.get("description"))
-        if not cidade:
-            cidade = cidade_from_text(item.get("city"), item.get("cityName"), allow_bare=True)
-        extra = {"cidade": cidade} if cidade else {}
-        desc = _as_text(item.get("description")) or None
+        detail = item.get("offerDetail") if isinstance(item.get("offerDetail"), dict) else {}
+        if price is None:
+            price = detail.get("currentMinBid") or detail.get("initialBidValue")
+            if isinstance(price, (int, float)):
+                price = float(price)
         return ScrapedLot(
-            external_id=offer_id or (friendly_url.split("-")[-1] if friendly_url else "unknown"),
+            external_id=offer_id or "unknown",
             title=title or f"Oferta {offer_id}",
             description=desc,
-            category=category,
-            minimum_bid=price,
-            current_bid=price,
+            category=category if isinstance(category, str) else tipo,
+            minimum_bid=float(price) if isinstance(price, (int, float)) else None,
+            current_bid=float(price) if isinstance(price, (int, float)) else None,
             reference_value=float(evaluation) if isinstance(evaluation, (int, float)) else None,
             url=url,
-            raw_data=json.dumps(extra, ensure_ascii=False) if extra else None,
+            raw_data=extra,
         )
 
     def _parse_oferta_links(self, html: str) -> list[ScrapedLot]:
@@ -220,8 +206,10 @@ class CalilScraper(BaseScraper):
         lots: list[ScrapedLot] = []
         for a in soup.select('a[href*="/oferta/"]'):
             href = a.get("href") or ""
+            if not isinstance(href, str):
+                continue
             if "exchange.superbid" in href or href.startswith("/oferta/"):
-                full_url = href if href.startswith("http") else f"{self.base_url}{href}"
+                full_url = href if href.startswith("http") else f"https://exchange.superbid.net{href}"
             else:
                 continue
             slug_id = href.strip("/").split("/")[-1]
@@ -236,18 +224,15 @@ class CalilScraper(BaseScraper):
             lance_match = RE_LANCE_ATUAL.search(text)
             current_bid = parse_br_currency(lance_match.group(1)) if lance_match else None
             cidade = cidade_from_text(title, text)
-            extra = {"cidade": cidade} if cidade else {}
+            extra = extra_json({"cidade": cidade, "tipo": tipo_from_text(title)})
             lots.append(
                 ScrapedLot(
                     external_id=external_id[:128],
                     title=title,
-                    description=None,
-                    category=None,
+                    url=full_url,
                     minimum_bid=current_bid,
                     current_bid=current_bid,
-                    reference_value=None,
-                    url=full_url,
-                    raw_data=json.dumps(extra, ensure_ascii=False) if extra else None,
+                    raw_data=extra,
                 )
             )
         return lots
@@ -266,7 +251,7 @@ def _price_from_item(item: dict[str, Any]) -> Optional[float]:
             inner = val.get("value") or val.get("amount")
             if isinstance(inner, (int, float)):
                 return float(inner)
-    formatted = item.get("formattedPrice")
+    formatted = item.get("formattedPrice") or item.get("priceFormatted")
     if isinstance(formatted, str):
         return parse_br_currency(formatted)
     return None
