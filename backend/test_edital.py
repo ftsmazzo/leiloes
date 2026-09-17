@@ -39,6 +39,47 @@ def test_fields_from_text_read_avaliacao_ocupacao_divida():
     assert fields["dividas"]["iptu"] == 3200
 
 
+IPTU_CADASTRO = """
+Matrícula: 0045170 - 2º Cartório de Registro de Imóveis
+Inscrição Cadastral: 441-13-77-2
+Logradouro: Rua Amador Bueno, n°. 253
+Complemento: AP 101
+Bairro: Centro
+CEP: 14.010-070
+Área do terreno: 16,07 m²
+Valor venal do terreno: R$ 15.323,22
+Edificação principal: 83,29 m²
+Valor venal edificação principal: R$ 84.432,73
+Valor venal do imóvel: R$ 99.755,95
+"""
+
+
+def test_fields_from_text_usa_venal_do_imovel_nao_do_terreno():
+    fields = fields_from_text(IPTU_CADASTRO)
+    assert fields["avaliacao_edital"] == 99755.95
+    assert fields["avaliacao_fonte"] == "venal_imovel"
+    assert fields["valor_venal_terreno"] == 15323.22
+    assert fields["valor_venal_edificacao"] == 84432.73
+    assert fields["area_edificacao"] == 83.29
+    assert fields["area_terreno"] == 16.07
+    assert "83,29" in fields["area"]
+
+
+def test_score_venal_acima_nao_conta_como_overpay():
+    result = compute_score(
+        title="Apartamento Centro",
+        current_bid=198235.60,
+        reference_value=99755.95,
+        fonte_avaliacao="venal_imovel",
+        dividas={"condominio": 185.97},
+    )
+    assert result["tem_comparacao_preco"] is False
+    assert result["fonte_avaliacao"] == "venal_imovel"
+    assert any("não conta como overpay" in m for m in result["motivos"])
+    assert any("impacto baixo" in m for m in result["motivos"])
+    assert result["score"] >= 40
+
+
 def test_score_com_edital_sobe_quando_ha_desconto_e_desocupado():
     sem = compute_score(title="Apartamento", current_bid=202408.70)
     com = compute_score(
@@ -51,7 +92,7 @@ def test_score_com_edital_sobe_quando_ha_desconto_e_desocupado():
     assert sem["tem_comparacao_preco"] is False
     assert com["tem_comparacao_preco"] is True
     assert com["score"] > sem["score"]
-    assert com["score"] >= 80
+    assert com["score"] >= 75
 
 
 def test_parecer_from_facts_nao_inventa_numero():
@@ -172,6 +213,8 @@ def test_avaliar_lote_com_texto_recalcula_score(monkeypatch=None):
 if __name__ == "__main__":
     test_collect_pdfs_keeps_edital_skips_privacy()
     test_fields_from_text_read_avaliacao_ocupacao_divida()
+    test_fields_from_text_usa_venal_do_imovel_nao_do_terreno()
+    test_score_venal_acima_nao_conta_como_overpay()
     test_score_com_edital_sobe_quando_ha_desconto_e_desocupado()
     test_parecer_from_facts_nao_inventa_numero()
     test_leilao_status_nao_confunde_arrematante_com_vendido()

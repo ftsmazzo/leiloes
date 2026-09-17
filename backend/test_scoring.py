@@ -74,6 +74,44 @@ def test_fator_praca_avancada_da_bonus():
     assert any("2ª praça" in m for m in praca2["motivos"])
 
 
+def test_divida_pequena_nao_derruba_score():
+    pequena = compute_score(
+        title="Apartamento",
+        current_bid=198235.60,
+        reference_value=400000,
+        fonte_avaliacao="laudo",
+        dividas={"condominio": 185.97},
+    )
+    grande = compute_score(
+        title="Apartamento",
+        current_bid=198235.60,
+        reference_value=400000,
+        fonte_avaliacao="laudo",
+        dividas={"condominio": 80000},
+    )
+    assert pequena["score"] > grande["score"]
+    assert any("impacto baixo" in m for m in pequena["motivos"])
+
+
+def test_venal_nao_penaliza_lance_acima_do_iptu():
+    venal = compute_score(
+        title="Apartamento",
+        current_bid=198235.60,
+        reference_value=99755.95,
+        fonte_avaliacao="venal_imovel",
+    )
+    laudo_caro = compute_score(
+        title="Apartamento",
+        current_bid=198235.60,
+        reference_value=99755.95,
+        fonte_avaliacao="laudo",
+    )
+    assert venal["tem_comparacao_preco"] is False
+    assert laudo_caro["tem_comparacao_preco"] is True
+    assert venal["score"] > laudo_caro["score"]
+    assert any("venal" in m.lower() for m in venal["motivos"])
+
+
 if __name__ == "__main__":
     test_score_sem_nenhuma_referencia_de_preco_fica_parcial()
     test_score_com_desconto_grande_sobe_e_avisa_fonte()
@@ -84,4 +122,6 @@ if __name__ == "__main__":
     test_fator_risco_desocupado_nao_confunde_com_ocupado()
     test_fator_risco_divida_penaliza()
     test_fator_praca_avancada_da_bonus()
+    test_divida_pequena_nao_derruba_score()
+    test_venal_nao_penaliza_lance_acima_do_iptu()
     print("ok")

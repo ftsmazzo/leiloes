@@ -32,14 +32,31 @@ SKIP_HREF = re.compile(
     r"proposta|politica|privacidade|cookie|termos-de-uso|modelo-de-proposta",
     re.I,
 )
-RE_AVALIACAO = re.compile(
-    r"(?:avalia[cç][aã]o(?:\s+(?:judicial|pericial|atualizada))?|valor\s+(?:venal|de\s+mercado))"
-    r".{0,80}?R\$\s*([\d.]+,\d{2})",
-    re.I,
-)
 RE_MONEY = re.compile(r"R\$\s*([\d.]+,\d{2})")
 RE_IPTU = re.compile(r"iptu.{0,60}?R\$\s*([\d.]+,\d{2})", re.I)
 RE_CONDO = re.compile(r"condom[ií]nio.{0,60}?R\$\s*([\d.]+,\d{2})", re.I)
+RE_VENAL_IMOVEL = re.compile(
+    r"valor\s+venal\s+do\s+im[oó]vel[:\s]*R\$\s*([\d.]+,\d{2})",
+    re.I,
+)
+RE_VENAL_TERRENO = re.compile(
+    r"valor\s+venal\s+do\s+terreno[:\s]*R\$\s*([\d.]+,\d{2})",
+    re.I,
+)
+RE_VENAL_EDIF = re.compile(
+    r"valor\s+venal\s+(?:da\s+)?edifica[cç][aã]o(?:\s+principal)?[:\s]*R\$\s*([\d.]+,\d{2})",
+    re.I,
+)
+RE_LAUDO = re.compile(
+    r"(?:laudo\s+de\s+avalia[cç][aã]o|avalia[cç][aã]o(?:\s+(?:judicial|pericial|atualizada))?|"
+    r"valor\s+de\s+mercado)[:\s,]*(?:no\s+valor\s+de\s+)?R\$\s*([\d.]+,\d{2})",
+    re.I,
+)
+RE_AREA_TERRENO = re.compile(r"[aá]rea\s+do\s+terreno[:\s]+([\d.]+,\d+)\s*m", re.I)
+RE_AREA_EDIF = re.compile(
+    r"(?:edifica[cç][aã]o\s+principal|[aá]rea\s+(?:privativa|constru[ií]da|[úu]til))[:\s]+([\d.]+,\d+)\s*m",
+    re.I,
+)
 
 DOC_TIPOS: list[tuple[str, re.Pattern[str]]] = [
     ("laudo", re.compile(r"laudo|avalia", re.I)),
@@ -106,13 +123,71 @@ def extract_pdf_text(data: bytes) -> tuple[str, bool]:
     return text[:MAX_TEXT], scanned
 
 
+def _money(pattern: re.Pattern[str], blob: str) -> Optional[float]:
+    found = pattern.search(blob)
+    if not found:
+        return None
+    value = parse_br_currency(found.group(1))
+    return value if value and value > 0 else None
+
+
+def _area(pattern: re.Pattern[str], blob: str) -> Optional[float]:
+    found = pattern.search(blob)
+    if not found:
+        return None
+    value = parse_br_currency(found.group(1))
+    return value if value and value > 0 else None
+
+
+def _pick_avaliacao(blob: str) -> dict[str, Any]:
+    """Laudo/avaliação judicial ganha. Venal do imóvel ≠ venal do terreno."""
+    out: dict[str, Any] = {}
+    venal_imovel = _money(RE_VENAL_IMOVEL, blob)
+    venal_terreno = _money(RE_VENAL_TERRENO, blob)
+    venal_edif = _money(RE_VENAL_EDIF, blob)
+    if venal_terreno:
+        out["valor_venal_terreno"] = venal_terreno
+    if venal_edif:
+        out["valor_venal_edificacao"] = venal_edif
+    if venal_imovel:
+        out["valor_venal_imovel"] = venal_imovel
+    elif venal_terreno and venal_edif:
+        out["valor_venal_imovel"] = round(venal_terreno + venal_edif, 2)
+
+    laudo = _money(RE_LAUDO, blob)
+    # "valor venal do terreno" não pode vazar como laudo: o padrão de laudo
+    # não inclui a palavra venal, mas um "avaliação ... R$" genérico sim.
+    if laudo and venal_terreno and abs(laudo - venal_terreno) < 0.01:
+        laudo = None
+    if laudo and out.get("valor_venal_imovel") and abs(laudo - out["valor_venal_imovel"]) < 0.01:
+        laudo = None
+    if laudo and venal_edif and abs(laudo - venal_edif) < 0.01:
+        laudo = None
+    if laudo and laudo > 1000:
+        out["avaliacao_edital"] = laudo
+        out["avaliacao_fonte"] = "laudo"
+    elif out.get("valor_venal_imovel") and out["valor_venal_imovel"] > 1000:
+        out["avaliacao_edital"] = out["valor_venal_imovel"]
+        out["avaliacao_fonte"] = "venal_imovel"
+    elif venal_edif and venal_edif > 1000:
+        out["avaliacao_edital"] = venal_edif
+        out["avaliacao_fonte"] = "venal_imovel"
+    elif venal_terreno and venal_terreno > 1000 and not venal_edif:
+        out["avaliacao_edital"] = venal_terreno
+        out["avaliacao_fonte"] = "venal_imovel"
+    return out
+
+
 def fields_from_text(blob: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    found = RE_AVALIACAO.search(blob)
-    if found:
-        value = parse_br_currency(found.group(1))
-        if value and value > 1000:
-            out["avaliacao_edital"] = value
+    out.update(_pick_avaliacao(blob))
+    area_terreno = _area(RE_AREA_TERRENO, blob)
+    area_edif = _area(RE_AREA_EDIF, blob)
+    if area_terreno:
+        out["area_terreno"] = area_terreno
+    if area_edif:
+        out["area_edificacao"] = area_edif
+        out["area"] = f"{area_edif:.2f} m²".replace(".", ",")
     desocupado = bool(RE_DESOCUPADO.search(blob))
     ocupado = bool(RE_OCUPADO.search(blob)) and not desocupado
     if desocupado:
@@ -159,6 +234,20 @@ def parecer_from_facts(facts: dict[str, Any]) -> str:
     lance = facts.get("lance_atual")
     if isinstance(lance, (int, float)) and status != "encerrado":
         linhas.append(f"Lance pedido agora: R$ {lance:,.2f}.".replace(",", "X").replace(".", ",").replace("X", "."))
+    fonte = facts.get("avaliacao_fonte")
+    aval = facts.get("avaliacao_edital")
+    venal_t = facts.get("valor_venal_terreno")
+    if fonte == "venal_imovel" and isinstance(aval, (int, float)):
+        linhas.append(
+            f"Valor venal do imóvel (IPTU): R$ {aval:,.2f}.".replace(",", "X").replace(".", ",").replace("X", ".")
+        )
+        if isinstance(venal_t, (int, float)):
+            linhas.append(
+                f"Não usar o venal do terreno (R$ {venal_t:,.2f}) como valor do imóvel.".replace(",", "X").replace(".", ",").replace("X", ".")
+            )
+    area_e = facts.get("area_edificacao")
+    if isinstance(area_e, (int, float)):
+        linhas.append(f"Área da edificação: {area_e:.2f} m².".replace(".", ","))
     if facts.get("scanned"):
         linhas.append("Há PDF escaneado sem texto extraível; OCR fica para um próximo passo.")
     if not linhas:
@@ -179,6 +268,11 @@ def _mistral_parecer(facts: dict[str, Any]) -> str | None:
         "score": facts.get("score"),
         "motivos": facts.get("motivos") or [],
         "avaliacao": facts.get("avaliacao_edital"),
+        "avaliacao_fonte": facts.get("avaliacao_fonte"),
+        "valor_venal_imovel": facts.get("valor_venal_imovel"),
+        "valor_venal_terreno": facts.get("valor_venal_terreno"),
+        "area_edificacao": facts.get("area_edificacao"),
+        "area_terreno": facts.get("area_terreno"),
         "lance_atual": facts.get("lance_atual"),
         "status": facts.get("status") or "aberto",
         "ocupacao": facts.get("ocupacao"),
@@ -211,6 +305,9 @@ def _mistral_parecer(facts: dict[str, Any]) -> str | None:
                             "Nunca escreva que o imóvel foi arrematado, vendido ou encerrado "
                             "salvo se status for encerrado. "
                             "Se status for aguardando, diga que o leilão ainda não abriu. "
+                            "Valor venal do terreno NÃO é o valor do imóvel; use avaliacao "
+                            "ou valor_venal_imovel. Área útil é area_edificacao, não area_terreno. "
+                            "avaliacao_fonte=venal_imovel é IPTU, não laudo de mercado. "
                             "Não use adjetivo de venda. Se faltar dado, diga que falta. "
                             "Explique o score com os motivos."
                         ),
@@ -289,8 +386,18 @@ def avaliar_lote(
     out["docs"] = stored_docs
     out["avaliado_em"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     out["status"] = status
-    if extracted.get("avaliacao_edital"):
-        out["avaliacao_edital"] = extracted["avaliacao_edital"]
+    for key in (
+        "avaliacao_edital",
+        "avaliacao_fonte",
+        "valor_venal_imovel",
+        "valor_venal_terreno",
+        "valor_venal_edificacao",
+        "area_edificacao",
+        "area_terreno",
+        "area",
+    ):
+        if extracted.get(key) not in (None, "", [], {}):
+            out[key] = extracted[key]
     if extracted.get("ocupacao"):
         out["ocupacao"] = extracted["ocupacao"]
     if extracted.get("dividas"):
@@ -301,6 +408,7 @@ def avaliar_lote(
     ref = out.get("avaliacao_edital") or reference_value
     tem_divida = extracted.get("tem_divida")
     ocupacao = out.get("ocupacao") if isinstance(out.get("ocupacao"), str) else None
+    fonte = out.get("avaliacao_fonte") if out.get("avaliacao_fonte") in ("laudo", "venal_imovel") else None
     desc = " ".join(p for p in (description, blob[:3000]) if p)
     score_info = compute_score(
         title=title,
@@ -313,6 +421,8 @@ def avaliar_lote(
         else None,
         ocupacao=ocupacao,
         tem_divida=tem_divida if isinstance(tem_divida, bool) else None,
+        fonte_avaliacao=fonte,
+        dividas=out.get("dividas") if isinstance(out.get("dividas"), dict) else None,
     )
     out["score"] = score_info["score"]
     out["score_tem_comparacao_preco"] = score_info["tem_comparacao_preco"]
@@ -323,6 +433,11 @@ def avaliar_lote(
         "tem_comparacao_preco": out["score_tem_comparacao_preco"],
         "motivos": out["score_motivos"],
         "avaliacao_edital": out.get("avaliacao_edital"),
+        "avaliacao_fonte": out.get("avaliacao_fonte"),
+        "valor_venal_terreno": out.get("valor_venal_terreno"),
+        "valor_venal_imovel": out.get("valor_venal_imovel"),
+        "area_edificacao": out.get("area_edificacao"),
+        "area_terreno": out.get("area_terreno"),
         "lance_atual": current_bid if current_bid is not None else minimum_bid,
         "status": status,
         "ocupacao": ocupacao,
@@ -341,7 +456,7 @@ def avaliar_lote(
 
 def apply_avaliacao_to_lot(lot, extra: dict[str, Any]) -> None:
     aval = extra.get("avaliacao_edital")
-    if isinstance(aval, (int, float)) and aval > 0 and lot.reference_value is None:
+    if isinstance(aval, (int, float)) and aval > 0:
         lot.reference_value = float(aval)
     lot.raw_data = extra_json(extra)
     lot.updated_at = datetime.utcnow()

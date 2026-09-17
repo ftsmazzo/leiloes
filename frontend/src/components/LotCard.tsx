@@ -31,6 +31,7 @@ export type Lot = {
   docs?: LotDoc[];
   dividas: Record<string, unknown> | null;
   avaliacao_edital: number | null;
+  avaliacao_fonte?: string | null;
   status?: string | null;
   current_bid: number | null;
   minimum_bid: number | null;
@@ -132,7 +133,7 @@ export function LotCard({ lot, onUpdated }: { lot: Lot; onUpdated?: (lot: Lot) =
           <dd>{formatMoney(bid)}</dd>
           {lot.reference_value != null ? (
             <>
-              <dt>Avaliação</dt>
+              <dt>{lot.avaliacao_fonte === 'venal_imovel' ? 'Valor venal (IPTU)' : 'Avaliação'}</dt>
               <dd>{formatMoney(lot.reference_value)}</dd>
             </>
           ) : null}
