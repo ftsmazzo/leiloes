@@ -4,8 +4,10 @@ Este arquivo vale para **qualquer agente, de qualquer modelo**, nos dois produto
 
 | Produto | Pasta | GitHub |
 |---------|--------|--------|
-| Pré-orçamento HDM | `C:\Users\anjo_\OneDrive\Projetos-FabriaIA\venda-epis` | `ftsmazzo/venda-epis` |
-| Imóveis em leilão | `C:\Users\anjo_\OneDrive\Projetos-FabriaIA\Leilões` | Issues: `fredmazzo-ia/leiloes` · PRs: fork `ftsmazzo/leiloes` |
+| Pré-orçamento HDM | `C:\Users\anjo_\OneDrive\Projetos-FabriaIA\venda-epis` | [ftsmazzo/venda-epis](https://github.com/ftsmazzo/venda-epis) |
+| Imóveis em leilão | `C:\Users\anjo_\OneDrive\Projetos-FabriaIA\Leilões` | [ftsmazzo/leiloes](https://github.com/ftsmazzo/leiloes) |
+
+Conta GitHub de trabalho: **ftsmazzo**. Não usar `fredmazzo-ia`.
 
 São **dois sistemas**. Mesmo padrão de trabalho. Código e deploy separados.
 
