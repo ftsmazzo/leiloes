@@ -145,7 +145,7 @@ A busca “sem sentido” hoje: filtro frágil + scrapers HTML + lotes que não 
 4. Busca com filtro de verdade + telas por base  
 5. Motion no catálogo e no pedido  
 
-Não inventar dezenas de fontes no mesmo PR.
+Não inventar dezenas de fontes no mesmo PR. Nova fonte: Issue em [ftsmazzo/leiloes#16](https://github.com/ftsmazzo/leiloes/issues/16), classe `BaseScraper` e uma linha em `backend/app/scrapers/registry.py`.
 
 ---
 

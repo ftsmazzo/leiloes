@@ -14,8 +14,7 @@ from sqlalchemy import select
 
 from app.models.database import Base, engine, AsyncSessionLocal
 from app.models.schemas import AuctionModel, LotModel
-from app.scrapers.calil import CalilScraper
-from app.scrapers.vegas import VegasScraper
+from app.scrapers.registry import all_scrapers
 
 
 async def run_all():
@@ -23,7 +22,7 @@ async def run_all():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    scrapers = [CalilScraper(), VegasScraper()]
+    scrapers = all_scrapers()
     summary = {"total_auctions": 0, "total_lots": 0, "by_source": {}, "errors": []}
 
     async with AsyncSessionLocal() as session:

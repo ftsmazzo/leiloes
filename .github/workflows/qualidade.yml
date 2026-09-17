@@ -23,4 +23,4 @@ jobs:
         run: python -m compileall -q app
       - name: Testes
         run: |
-          if [ -f test_criteria.py ]; then python test_criteria.py; fi
+          for f in test_*.py; do python "$f"; done
