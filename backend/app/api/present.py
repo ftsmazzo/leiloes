@@ -42,6 +42,7 @@ def lot_to_out(lot: LotModel, source: str) -> LotOut:
         docs=extra.get("docs") if isinstance(extra.get("docs"), list) else [],
         dividas=extra.get("dividas") if isinstance(extra.get("dividas"), dict) else None,
         avaliacao_edital=extra.get("avaliacao_edital") if isinstance(extra.get("avaliacao_edital"), (int, float)) else None,
+        status=extra.get("status") if extra.get("status") in ("aberto", "aguardando", "encerrado") else None,
         minimum_bid=lot.minimum_bid,
         current_bid=lot.current_bid,
         reference_value=lot.reference_value,

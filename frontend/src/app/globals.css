@@ -436,6 +436,14 @@ a {
   margin-right: 0.4rem;
 }
 
+.status-tag {
+  font-size: 0.7rem;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+}
+
 .card-meta {
   margin-top: 0.45rem;
   font-size: 0.875rem;

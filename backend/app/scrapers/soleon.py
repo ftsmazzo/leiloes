@@ -12,7 +12,7 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup, Tag
 
 from .base import ScrapedLot
-from .extract import cidade_from_text, extra_json, parse_br_currency, tipo_from_text
+from .extract import cidade_from_text, extra_json, leilao_status, parse_br_currency, tipo_from_text
 
 RE_ITEM = re.compile(r"/item/(\d+)/detalhes")
 RE_LEILAO = re.compile(r"/leilao/(\d+)/lotes")
@@ -76,7 +76,7 @@ def _photo_from(tag: Tag) -> str | None:
 
 
 def _is_encerrado(text: str) -> bool:
-    return bool(re.search(r"encerrado", text, re.I))
+    return leilao_status(text) == "encerrado"
 
 
 def _lot_extra(
@@ -100,6 +100,7 @@ def _lot_extra(
         extra["matricula"] = labels["matricula"]
     if foto:
         extra["foto"] = foto
+    extra["status"] = leilao_status(title, blob)
     return extra
 
 

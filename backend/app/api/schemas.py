@@ -31,6 +31,7 @@ class LotOut(BaseModel):
     docs: list[dict] = []
     dividas: Optional[dict] = None
     avaliacao_edital: Optional[float] = None
+    status: Optional[str] = None
     minimum_bid: Optional[float] = None
     current_bid: Optional[float] = None
     reference_value: Optional[float] = None

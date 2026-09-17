@@ -150,6 +150,22 @@ def tipo_from_text(*parts: Any) -> str | None:
     return None
 
 
+RE_FECHADO = re.compile(r"\b(encerrado|arrematado|lote vendido|leil[aã]o encerrado)\b", re.I)
+RE_AGUARDANDO = re.compile(r"aguarde abertura", re.I)
+
+
+def leilao_status(*parts: Any) -> str:
+    """aberto | aguardando | encerrado. 'arrematante' no edital não conta como vendido."""
+    blob = " ".join(_as_text(p) for p in parts if p)
+    if not blob:
+        return "aberto"
+    if RE_FECHADO.search(blob) and "aberto para lances" not in blob.lower():
+        return "encerrado"
+    if RE_AGUARDANDO.search(blob):
+        return "aguardando"
+    return "aberto"
+
+
 def _clip_field(value: Any, max_len: int) -> str | None:
     if not isinstance(value, str):
         return None

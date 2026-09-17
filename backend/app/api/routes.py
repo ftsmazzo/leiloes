@@ -118,6 +118,7 @@ async def list_lots(
         stmt = stmt.limit(limit).offset(offset)
     result = await db.execute(stmt)
     rows = list(result.all())
+    rows = [row for row in rows if raw_dict(row[0]).get("status") != "encerrado"]
     if text_filter:
         lots_only = [row[0] for row in rows]
         kept_ids = {lot.id for lot in filter_lots(lots_only, cidade=cidade, tipo=tipo, q=q_txt)}

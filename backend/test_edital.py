@@ -6,6 +6,8 @@ from app.edital import (
     fields_from_text,
     parecer_from_facts,
 )
+from app.scrapers.extract import leilao_status
+from app.scrapers.soleon import lots_from_imovel_list
 from app.scoring import compute_score
 
 ROOT = Path(__file__).resolve().parent
@@ -59,11 +61,47 @@ def test_parecer_from_facts_nao_inventa_numero():
             "tem_comparacao_preco": True,
             "motivos": ["49% abaixo da avaliação do edital", "desocupado (declarado no edital)"],
             "docs": [{"label": "Edital", "tipo": "edital"}],
+            "status": "aberto",
+            "lance_atual": 198235.6,
         }
     )
     assert "83/100" in text
     assert "Edital" in text
     assert "imperdível" not in text.lower()
+    assert "arrematad" not in text.lower()
+
+
+def test_leilao_status_nao_confunde_arrematante_com_vendido():
+    assert leilao_status("Aguarde Abertura Lance Inicial R$198.235,60") == "aguardando"
+    assert leilao_status("Lote encerrado") == "encerrado"
+    assert leilao_status("Imóvel arrematado em 10/09") == "encerrado"
+    assert leilao_status("O arrematante deverá quitar o saldo") == "aberto"
+
+
+def test_imovel_list_skips_arrematado():
+    html = """
+    <div class="lote"><a href="/item/1/detalhes"><h5>Casa aberta</h5>
+    <div class="label_lote aberto_lance">Aberto para Lances</div>
+    <h4 class="mb-0">R$100.000,00</h4></a></div>
+    <div class="lote"><a href="/item/2/detalhes"><h5>Casa vendida</h5>
+    <div>Lote encerrado — arrematado</div>
+    <h4 class="mb-0">R$90.000,00</h4></a></div>
+    """
+    lots = lots_from_imovel_list(html, "https://www.calilleiloes.com.br")
+    assert [lot.external_id for lot in lots] == ["1"]
+
+
+def test_parecer_aguardando_nao_diz_arrematado():
+    text = parecer_from_facts(
+        {
+            "score": 38,
+            "status": "aguardando",
+            "lance_atual": 198235.6,
+            "motivos": ["sem referência de preço pra comparar — score calculado só com risco/praça"],
+        }
+    )
+    assert "ainda não abriu" in text.lower()
+    assert "arrematad" not in text.lower()
 
 
 def test_avaliar_lote_usa_fixture_sem_rede():
@@ -136,6 +174,9 @@ if __name__ == "__main__":
     test_fields_from_text_read_avaliacao_ocupacao_divida()
     test_score_com_edital_sobe_quando_ha_desconto_e_desocupado()
     test_parecer_from_facts_nao_inventa_numero()
+    test_leilao_status_nao_confunde_arrematante_com_vendido()
+    test_imovel_list_skips_arrematado()
+    test_parecer_aguardando_nao_diz_arrematado()
     test_avaliar_lote_usa_fixture_sem_rede()
     test_avaliar_lote_com_texto_recalcula_score()
     print("ok")

@@ -31,6 +31,7 @@ export type Lot = {
   docs?: LotDoc[];
   dividas: Record<string, unknown> | null;
   avaliacao_edital: number | null;
+  status?: string | null;
   current_bid: number | null;
   minimum_bid: number | null;
   reference_value: number | null;
@@ -95,6 +96,7 @@ export function LotCard({ lot, onUpdated }: { lot: Lot; onUpdated?: (lot: Lot) =
       <div className="lot-card-body">
         <div className="lot-card-head">
           <span className="source-tag">{lot.source}</span>
+          {lot.status === 'aguardando' ? <span className="status-tag">Ainda não abriu</span> : null}
           {lot.score != null ? (
             <span
               className="score-badge"

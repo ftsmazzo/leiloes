@@ -18,7 +18,7 @@ import httpx
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
 
-from app.scrapers.extract import extra_json, parse_br_currency
+from app.scrapers.extract import extra_json, leilao_status, parse_br_currency
 from app.scrapers.listing import HEADERS, href_of, text_of
 from app.scoring import RE_DESOCUPADO, RE_DIVIDA, RE_OCUPADO, compute_score
 
@@ -151,6 +151,14 @@ def parecer_from_facts(facts: dict[str, Any]) -> str:
     if docs:
         nomes = ", ".join(d.get("label") or d.get("tipo") for d in docs[:6] if isinstance(d, dict))
         linhas.append(f"Documentos lidos: {nomes}.")
+    status = facts.get("status")
+    if status == "aguardando":
+        linhas.insert(0, "Leilão ainda não abriu para lances.")
+    elif status == "encerrado":
+        linhas.insert(0, "Lote encerrado ou já arrematado — fora do catálogo de trabalho.")
+    lance = facts.get("lance_atual")
+    if isinstance(lance, (int, float)) and status != "encerrado":
+        linhas.append(f"Lance pedido agora: R$ {lance:,.2f}.".replace(",", "X").replace(".", ",").replace("X", "."))
     if facts.get("scanned"):
         linhas.append("Há PDF escaneado sem texto extraível; OCR fica para um próximo passo.")
     if not linhas:
@@ -171,7 +179,8 @@ def _mistral_parecer(facts: dict[str, Any]) -> str | None:
         "score": facts.get("score"),
         "motivos": facts.get("motivos") or [],
         "avaliacao": facts.get("avaliacao_edital"),
-        "lance": facts.get("lance"),
+        "lance_atual": facts.get("lance_atual"),
+        "status": facts.get("status") or "aberto",
         "ocupacao": facts.get("ocupacao"),
         "dividas": facts.get("dividas"),
         "docs": [d.get("label") for d in (facts.get("docs") or []) if isinstance(d, dict)],
@@ -198,8 +207,12 @@ def _mistral_parecer(facts: dict[str, Any]) -> str | None:
                             "Você é analista de leilão judicial de imóvel no Brasil. "
                             "Escreva 2 parágrafos curtos, objetivos, em português. "
                             "Use só os fatos do JSON. Não invente valor, dívida, ocupação nem desconto. "
-                            "Não use adjetivo de venda (imperdível, oportunidade única). "
-                            "Se faltar dado, diga que falta. Explique o score com os motivos."
+                            "lance_atual é o preço pedido agora, NÃO valor de arrematação. "
+                            "Nunca escreva que o imóvel foi arrematado, vendido ou encerrado "
+                            "salvo se status for encerrado. "
+                            "Se status for aguardando, diga que o leilão ainda não abriu. "
+                            "Não use adjetivo de venda. Se faltar dado, diga que falta. "
+                            "Explique o score com os motivos."
                         ),
                     },
                     {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
@@ -249,6 +262,8 @@ def avaliar_lote(
 ) -> dict[str, Any]:
     """Lê a página do lote, PDFs públicos, devolve extra enriquecido. Não inventa."""
     html = fetch_page(url)
+    page_text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
+    status = leilao_status(title, description, page_text[:4000])
     docs = collect_pdfs(html, url)
     texts: list[str] = []
     scanned_any = False
@@ -273,6 +288,7 @@ def avaliar_lote(
     out = dict(extra)
     out["docs"] = stored_docs
     out["avaliado_em"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    out["status"] = status
     if extracted.get("avaliacao_edital"):
         out["avaliacao_edital"] = extracted["avaliacao_edital"]
     if extracted.get("ocupacao"):
@@ -307,7 +323,8 @@ def avaliar_lote(
         "tem_comparacao_preco": out["score_tem_comparacao_preco"],
         "motivos": out["score_motivos"],
         "avaliacao_edital": out.get("avaliacao_edital"),
-        "lance": current_bid if current_bid is not None else minimum_bid,
+        "lance_atual": current_bid if current_bid is not None else minimum_bid,
+        "status": status,
         "ocupacao": ocupacao,
         "dividas": out.get("dividas"),
         "docs": stored_docs,
@@ -316,6 +333,8 @@ def avaliar_lote(
         "headline": out.get("headline"),
     }
     parecer = _mistral_parecer(facts) if write_ai else None
+    if parecer and status != "encerrado" and re.search(r"\barrematad", parecer, re.I):
+        parecer = None
     out["parecer"] = parecer or parecer_from_facts(facts)
     return {k: v for k, v in out.items() if v not in (None, "", [], {})}
 
