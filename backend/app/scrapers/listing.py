@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from datetime import datetime
+from typing import Any, Optional
 from urllib.parse import urljoin
 
 from bs4 import Tag
@@ -13,6 +14,7 @@ __all__ = [
     "HEADERS",
     "cidade_from_text",
     "parse_br_currency",
+    "parse_br_date",
     "tipo_from_text",
     "extra_json",
     "href_of",
@@ -22,6 +24,22 @@ __all__ = [
     "text_of",
     "origem_from_text",
 ]
+
+RE_DATE = re.compile(r"(\d{2}/\d{2}/\d{4})\s*(?:às|as)?\s*(\d{2}:\d{2})?", re.I)
+
+
+def parse_br_date(s: Optional[str]) -> Optional[datetime]:
+    if not s:
+        return None
+    m = RE_DATE.search(s)
+    if not m:
+        return None
+    try:
+        day, month, year = m.group(1).split("/")
+        hour, minute = (m.group(2) or "00:00").split(":")
+        return datetime(int(year), int(month), int(day), int(hour), int(minute))
+    except (ValueError, IndexError):
+        return None
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0",
