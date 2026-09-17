@@ -30,6 +30,8 @@ def lot_to_out(lot: LotModel, source: str) -> LotOut:
         matricula=extra.get("matricula"),
         area=extra.get("area"),
         foto=foto_of(lot) or (extra.get("foto") if isinstance(extra.get("foto"), str) and extra["foto"].startswith("http") and "facebook.com/tr" not in extra["foto"] else None),
+        valor_m2_regiao=extra.get("valor_m2_regiao"),
+        valor_mercado_estimado=extra.get("valor_mercado_estimado"),
         minimum_bid=lot.minimum_bid,
         current_bid=lot.current_bid,
         reference_value=lot.reference_value,

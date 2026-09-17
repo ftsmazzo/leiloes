@@ -14,6 +14,7 @@ from app.models.database import Base, engine, AsyncSessionLocal
 from app.scrapers.persist import persist_auctions
 from app.scrapers.registry import all_scrapers
 from app.scrapers.extract import enrich_extra, extra_json
+from app.scrapers.market_price import estimate_market_value
 import json
 
 
@@ -32,6 +33,9 @@ def _enrich_auctions(auctions, cap: int = 12) -> None:
             filled = enrich_extra(lot.title, lot.description, extra, use_ai=used < cap)
             if filled.get("extract") in ("gliner", "mistral"):
                 used += 1
+            mercado = estimate_market_value(filled.get("cidade"), filled.get("area"))
+            if mercado:
+                filled.update(mercado)
             lot.raw_data = extra_json(filled)
             if filled.get("tipo") and not lot.category:
                 lot.category = str(filled["tipo"])
