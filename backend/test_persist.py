@@ -119,6 +119,26 @@ def test_alertado_flag_survives_rescrape():
     assert '"score": 85' in lot.raw_data
 
 
+def test_riscos_juridicos_sobrevivem_rescrape():
+    session = _session()
+    persist_auctions(
+        session,
+        [
+            _auction(
+                100000,
+                "Casa antiga",
+                raw_data='{"avaliado_em": "2026-09-17T20:00:00Z", "processo_cnj": "0001234-11.2012.8.26.0100", "nao_entrar": true, "riscos": {"citacao": "nao_citado"}}',
+            )
+        ],
+    )
+    session.commit()
+    persist_auctions(session, [_auction(110000, "Casa atualizada", raw_data='{"cidade": "Sertãozinho"}')])
+    session.commit()
+    lot = session.execute(select(LotModel)).scalar_one()
+    assert "nao_citado" in (lot.raw_data or "")
+    assert "0001234-11.2012.8.26.0100" in (lot.raw_data or "")
+
+
 def test_persist_auctions_returns_touched_lots_with_source():
     session = _session()
     touched = persist_auctions(session, [_auction(100000)])
@@ -134,5 +154,6 @@ if __name__ == "__main__":
     test_none_bid_does_not_wipe_previous()
     test_parecer_and_avaliado_survive_rescrape()
     test_alertado_flag_survives_rescrape()
+    test_riscos_juridicos_sobrevivem_rescrape()
     test_persist_auctions_returns_touched_lots_with_source()
     print("ok")

@@ -190,6 +190,52 @@ def test_laudo_mais_antigo_sobe_score():
     assert any("10 anos" in m and "forte oportunidade" in m for m in dez["motivos"])
 
 
+def test_nao_citado_limita_score_ao_fundo():
+    result = compute_score(
+        title="Apartamento",
+        current_bid=100000,
+        reference_value=400000,
+        ocupacao="desocupado",
+        riscos={"citacao": "nao_citado", "nao_entrar": True},
+    )
+    assert result["score"] <= 12
+    assert any("não citado" in m for m in result["motivos"])
+    assert result["motivos"][0].startswith("executado não citado") or any(
+        "não entrar" in m for m in result["motivos"][:2]
+    )
+
+
+def test_usufruto_e_meacao_limitam_score():
+    usufruto = compute_score(
+        title="Casa",
+        current_bid=100000,
+        reference_value=400000,
+        riscos={"usufruto": True},
+    )
+    meacao = compute_score(
+        title="Casa",
+        current_bid=100000,
+        reference_value=400000,
+        riscos={"meacao": True},
+    )
+    assert usufruto["score"] <= 28
+    assert meacao["score"] <= 28
+    assert any("usufruto" in m for m in usufruto["motivos"])
+    assert any("meação" in m.lower() or "cônjuge" in m for m in meacao["motivos"])
+
+
+def test_citado_nao_aplica_teto():
+    result = compute_score(
+        title="Apartamento",
+        current_bid=100000,
+        reference_value=400000,
+        ocupacao="desocupado",
+        riscos={"citacao": "citado", "citacao_fonte": "datajud"},
+    )
+    assert result["score"] > 12
+    assert any("citado (DataJud)" in m for m in result["motivos"])
+
+
 if __name__ == "__main__":
     test_score_sem_nenhuma_referencia_de_preco_fica_parcial()
     test_score_com_desconto_grande_sobe_e_avisa_fonte()
@@ -206,4 +252,7 @@ if __name__ == "__main__":
     test_alerta_quando_lance_atual_supera_avaliacao()
     test_venal_nao_penaliza_lance_acima_do_iptu()
     test_laudo_mais_antigo_sobe_score()
+    test_nao_citado_limita_score_ao_fundo()
+    test_usufruto_e_meacao_limitam_score()
+    test_citado_nao_aplica_teto()
     print("ok")

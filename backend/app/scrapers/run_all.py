@@ -77,6 +77,7 @@ def _enrich_auctions(auctions, cap: int = 12) -> None:
                 minimum_bid=lot.minimum_bid,
                 reference_value=lot.reference_value,
                 valor_mercado_estimado=filled.get("valor_mercado_estimado"),
+                riscos=filled.get("riscos") if isinstance(filled.get("riscos"), dict) else None,
             )
             filled["score"] = score_info["score"]
             filled["score_tem_comparacao_preco"] = score_info["tem_comparacao_preco"]

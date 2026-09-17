@@ -234,6 +234,69 @@ def test_data_laudo_ignora_edital_e_condominio():
     assert so_data["avaliacao_data_origem"] == "processo"
 
 
+def test_fields_from_text_le_riscos_do_edital():
+    blob = (
+        "Processo n. 0001234-11.2012.8.26.0100. O executado não foi citado. "
+        "Matrícula com usufruto. Penhora da meação. Laudo R$ 400.000,00."
+    )
+    fields = fields_from_text(blob)
+    assert fields["processo_cnj"] == "0001234-11.2012.8.26.0100"
+    assert fields["riscos"]["citacao"] == "nao_citado"
+    assert fields["riscos"]["usufruto"] is True
+    assert fields["riscos"]["meacao"] is True
+
+
+def test_avaliar_lote_consulta_datajud_injetado():
+    from app import edital as edital_mod
+
+    original = edital_mod.extract_pdf_text
+
+    def fake_extract(_data: bytes):
+        return (
+            "Processo n. 0001234-11.2012.8.26.0100. O executado não foi citado. "
+            "Laudo de avaliação pericial R$ 400.000,00. Imóvel desocupado.",
+            False,
+        )
+
+    def fake_datajud(_url, _payload):
+        return {
+            "hits": {
+                "hits": [
+                    {
+                        "_source": {
+                            "tribunal": "TJSP",
+                            "classe": {"nome": "Execução"},
+                            "movimentos": [{"nome": "Citação cumprida"}],
+                        }
+                    }
+                ]
+            }
+        }
+
+    edital_mod.extract_pdf_text = fake_extract
+    try:
+        extra = avaliar_lote(
+            title="Apartamento",
+            description=None,
+            url="https://example.test/item/1",
+            current_bid=202408.70,
+            minimum_bid=202408.70,
+            reference_value=None,
+            extra={},
+            fetch_page=lambda _u: HTML,
+            fetch_file=lambda _u: b"%PDF-1.4 x",
+            fetch_datajud=fake_datajud,
+            write_ai=False,
+        )
+        assert extra["processo_cnj"] == "0001234-11.2012.8.26.0100"
+        assert extra["riscos"]["citacao"] == "citado"
+        assert extra["riscos"]["citacao_fonte"] == "datajud"
+        assert extra.get("nao_entrar") is None
+        assert extra["score"] > 12
+    finally:
+        edital_mod.extract_pdf_text = original
+
+
 if __name__ == "__main__":
     test_collect_pdfs_keeps_edital_skips_privacy()
     test_fields_from_text_read_avaliacao_ocupacao_divida()
@@ -248,4 +311,6 @@ if __name__ == "__main__":
     test_avaliar_lote_usa_fixture_sem_rede()
     test_avaliar_lote_com_texto_recalcula_score()
     test_data_laudo_ignora_edital_e_condominio()
+    test_fields_from_text_le_riscos_do_edital()
+    test_avaliar_lote_consulta_datajud_injetado()
     print("ok")

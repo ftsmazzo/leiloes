@@ -22,12 +22,17 @@ from datetime import date, datetime
 from typing import Any, Optional
 
 # peso de cada fator quando presente; renormalizado entre os que têm dado
-PESO_DESCONTO = 0.32
-PESO_RISCO = 0.18
-PESO_DIVIDA = 0.17
-PESO_IDADE = 0.15
-PESO_PRACA = 0.10
-PESO_QUALIDADE = 0.08
+PESO_DESCONTO = 0.26
+PESO_JURIDICO = 0.22
+PESO_RISCO = 0.12
+PESO_DIVIDA = 0.14
+PESO_IDADE = 0.12
+PESO_PRACA = 0.08
+PESO_QUALIDADE = 0.06
+
+TETO_NAO_CITADO = 12
+TETO_USUFRUTO = 28
+TETO_MEACAO = 28
 
 RE_OCUPADO = re.compile(r"\bocupad[oa]\b", re.I)
 RE_DESOCUPADO = re.compile(r"\b(?:des|não\s+)ocupad[oa]|\blivre\b|\bvazi[oa]\b", re.I)
@@ -336,6 +341,40 @@ def _fator_idade(
     return nota, detalhe
 
 
+def _fator_juridico(riscos: Optional[dict[str, Any]]) -> tuple[Optional[float], list[str]]:
+    """Citação, usufruto e meação. Sem dado no PDF o fator fica de fora."""
+    if not isinstance(riscos, dict) or not riscos:
+        return None, []
+    notas: list[float] = []
+    motivos: list[str] = []
+    citacao = riscos.get("citacao")
+    fonte = "DataJud" if riscos.get("citacao_fonte") == "datajud" else "edital"
+    if citacao == "nao_citado":
+        notas.append(-1.0)
+        motivos.append(f"executado não citado ({fonte}) — risco enorme, não entrar")
+    elif citacao == "pendente":
+        notas.append(-0.85)
+        motivos.append(f"citação ainda não cumprida ({fonte}) — não entrar até o dono ser notificado")
+    elif citacao == "edital":
+        notas.append(-0.7)
+        motivos.append(f"citação por edital ({fonte}) — dono pode não ter sido pessoalmente notificado")
+    elif citacao == "citado":
+        notas.append(0.35)
+        motivos.append(f"executado citado ({fonte})")
+    if riscos.get("usufruto"):
+        notas.append(-0.9)
+        motivos.append("usufruto/uso e fruto na matrícula — risco alto (nua propriedade)")
+    if riscos.get("meacao"):
+        notas.append(-0.85)
+        motivos.append("cônjuge/meação/fração — conferir se o leilão vende 100% do imóvel")
+    if riscos.get("leiloeiro_ok") is False:
+        notas.append(-0.3)
+        motivos.append("leiloeiro do edital diverge do anúncio — conferir se é o mesmo processo")
+    if not notas:
+        return None, motivos
+    return min(notas), motivos
+
+
 def _fator_qualidade(fonte: Optional[str]) -> tuple[Optional[float], Optional[str]]:
     if fonte == FONTE_MERCADO:
         return 0.7, "comparação com preço de mercado da região"
@@ -362,6 +401,7 @@ def compute_score(
     avaliacao_data_origem: Optional[str] = None,
     hoje: Optional[date] = None,
     tipo: Optional[str] = None,
+    riscos: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     blob = f"{title} {description or ''}"
 
@@ -394,9 +434,11 @@ def compute_score(
     )
     nota_praca, detalhe_praca = _fator_praca(blob)
     nota_qualidade, detalhe_qualidade = _fator_qualidade(fonte_usada)
+    nota_juridico, motivos_juridico = _fator_juridico(riscos)
 
     fatores = [
         (PESO_DESCONTO, nota_desconto),
+        (PESO_JURIDICO, nota_juridico),
         (PESO_RISCO, nota_risco),
         (PESO_DIVIDA, nota_divida),
         (PESO_IDADE, nota_idade),
@@ -408,8 +450,15 @@ def compute_score(
     media = sum(peso * nota for peso, nota in presentes) / peso_total
     score = round((media + 1) / 2 * 100)
     score = max(0, min(100, score))
+    if isinstance(riscos, dict):
+        if riscos.get("citacao") in ("nao_citado", "pendente"):
+            score = min(score, TETO_NAO_CITADO)
+        if riscos.get("usufruto"):
+            score = min(score, TETO_USUFRUTO)
+        if riscos.get("meacao"):
+            score = min(score, TETO_MEACAO)
 
-    motivos = [
+    motivos = list(motivos_juridico) + [
         d
         for d in (
             detalhe_desconto,

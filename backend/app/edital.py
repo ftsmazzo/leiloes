@@ -20,6 +20,8 @@ from pypdf import PdfReader
 
 from app.scrapers.extract import extra_json, leilao_status, parse_br_currency
 from app.scrapers.listing import HEADERS, href_of, text_of
+from app.juridico import riscos_from_text
+from app.datajud import consultar_datajud, merge_riscos
 from app.scoring import RE_DESOCUPADO, RE_DIVIDA, RE_OCUPADO, compute_score
 
 MAX_PDFS = 4
@@ -293,7 +295,7 @@ def _pick_avaliacao(blob: str) -> dict[str, Any]:
     return out
 
 
-def fields_from_text(blob: str) -> dict[str, Any]:
+def fields_from_text(blob: str, page_text: str = "") -> dict[str, Any]:
     out: dict[str, Any] = {}
     out.update(_pick_avaliacao(blob))
     out.update(avaliacao_data_from_text(blob))
@@ -332,6 +334,11 @@ def fields_from_text(blob: str) -> dict[str, Any]:
         out["tem_divida"] = bool(condo or mencao_condo)
     elif desocupado or ocupado or sem_divida:
         out["tem_divida"] = False
+    riscos = riscos_from_text(blob, page_text)
+    if riscos:
+        out["riscos"] = riscos
+        if riscos.get("processo_cnj"):
+            out["processo_cnj"] = riscos["processo_cnj"]
     return out
 
 
@@ -405,10 +412,12 @@ def _mistral_parecer(facts: dict[str, Any]) -> str | None:
         "status": facts.get("status") or "aberto",
         "ocupacao": facts.get("ocupacao"),
         "dividas": facts.get("dividas"),
-        "docs": [d.get("label") for d in (facts.get("docs") or []) if isinstance(d, dict)],
-        "scanned": bool(facts.get("scanned")),
-        "cidade": facts.get("cidade"),
-        "headline": facts.get("headline"),
+                        "docs": [d.get("label") for d in (facts.get("docs") or []) if isinstance(d, dict)],
+                        "scanned": bool(facts.get("scanned")),
+                        "cidade": facts.get("cidade"),
+                        "headline": facts.get("headline"),
+                        "processo_cnj": facts.get("processo_cnj"),
+                        "riscos": facts.get("riscos"),
     }
     try:
         r = httpx.post(
@@ -441,6 +450,9 @@ def _mistral_parecer(facts: dict[str, Any]) -> str | None:
                             "IPTU em leilão judicial em geral é abatido; condomínio NÃO se abate. "
                             "Lance atual acima do inicial é concorrência, não ponto negativo. "
                             "Alerta o lance atual em relação à avaliação. "
+                            "citacao nao_citado ou pendente: diga para não entrar. "
+                            "Usufruto e meação/fração são risco alto. "
+                            "DataJud só traz movimentos, não peças do processo. "
                             "Não use adjetivo de venda. Se faltar dado, diga que falta. "
                             "Explique o score com os motivos."
                         ),
@@ -488,6 +500,7 @@ def avaliar_lote(
     extra: dict[str, Any],
     fetch_page=fetch_html,
     fetch_file=fetch_pdf,
+    fetch_datajud=None,
     write_ai: bool = True,
 ) -> dict[str, Any]:
     """Lê a página do lote, PDFs públicos, devolve extra enriquecido. Não inventa."""
@@ -514,7 +527,7 @@ def avaliar_lote(
             texts.append(f"[{doc['tipo']}] {text}")
 
     blob = "\n".join(texts)
-    extracted = fields_from_text(blob)
+    extracted = fields_from_text(blob, page_text[:8000])
     out = dict(extra)
     out["docs"] = stored_docs
     out["avaliado_em"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -530,6 +543,7 @@ def avaliar_lote(
         "area",
         "avaliacao_data",
         "avaliacao_data_origem",
+        "processo_cnj",
     ):
         if extracted.get(key) not in (None, "", [], {}):
             out[key] = extracted[key]
@@ -539,6 +553,20 @@ def avaliar_lote(
         out["dividas"] = extracted["dividas"]
     if stored_docs and not blob.strip():
         out["edital_sem_texto"] = True
+
+    riscos = dict(extracted.get("riscos") or {})
+    cnj = riscos.get("processo_cnj")
+    if isinstance(cnj, str) and cnj:
+        dj = consultar_datajud(cnj, fetch=fetch_datajud)
+        riscos = merge_riscos(riscos, dj)
+    if riscos:
+        out["riscos"] = riscos
+        if riscos.get("processo_cnj"):
+            out["processo_cnj"] = riscos["processo_cnj"]
+        if riscos.get("nao_entrar"):
+            out["nao_entrar"] = True
+        else:
+            out.pop("nao_entrar", None)
 
     ref = out.get("avaliacao_edital") or reference_value
     tem_divida = extracted.get("tem_divida")
@@ -563,6 +591,7 @@ def avaliar_lote(
         if out.get("avaliacao_data_origem") in ("laudo", "processo")
         else None,
         tipo=out.get("tipo") if isinstance(out.get("tipo"), str) else None,
+        riscos=riscos or None,
     )
     out["score"] = score_info["score"]
     out["score_tem_comparacao_preco"] = score_info["tem_comparacao_preco"]
@@ -588,6 +617,8 @@ def avaliar_lote(
         "scanned": scanned_any,
         "cidade": out.get("cidade"),
         "headline": out.get("headline"),
+        "processo_cnj": out.get("processo_cnj"),
+        "riscos": riscos or None,
     }
     parecer = _mistral_parecer(facts) if write_ai else None
     if parecer and status != "encerrado" and re.search(r"\barrematad", parecer, re.I):

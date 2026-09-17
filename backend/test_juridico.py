@@ -1,0 +1,75 @@
+from app.juridico import riscos_from_text
+
+
+def test_nao_citado_e_cnj():
+    riscos = riscos_from_text(
+        "Processo n. 0001234-11.2012.8.26.0100. O executado não foi citado. "
+        "Leiloeiro público oficial João da Silva."
+    )
+    assert riscos["citacao"] == "nao_citado"
+    assert riscos["nao_entrar"] is True
+    assert riscos["processo_cnj"] == "0001234-11.2012.8.26.0100"
+
+
+def test_cnj_compacto_formata():
+    riscos = riscos_from_text("Processo nº 00012341120128260100")
+    assert riscos["processo_cnj"] == "0001234-11.2012.8.26.0100"
+
+
+def test_citado_regularmente_nao_trava():
+    riscos = riscos_from_text("O executado foi regularmente citado.")
+    assert riscos["citacao"] == "citado"
+    assert "nao_entrar" not in riscos
+
+
+def test_citacao_por_edital():
+    riscos = riscos_from_text("Citação por edital do executado.")
+    assert riscos["citacao"] == "edital"
+
+
+def test_usufruto_na_matricula():
+    riscos = riscos_from_text("A matrícula registra usufruto vitalício em favor de Maria.")
+    assert riscos["usufruto"] is True
+
+
+def test_livre_de_usufruto_nao_marca():
+    riscos = riscos_from_text("Imóvel livre de usufruto e ônus reais.")
+    assert "usufruto" not in riscos
+
+
+def test_meacao_e_conjuge():
+    riscos = riscos_from_text("Penhora da meação do executado e de sua cônjuge sobre o imóvel.")
+    assert riscos["meacao"] is True
+
+
+def test_conjuge_do_arrematante_nao_e_meacao():
+    riscos = riscos_from_text("O cônjuge do arrematante deverá anuir à carta.")
+    assert "meacao" not in riscos
+
+
+def test_leiloeiro_diverge_entre_edital_e_anuncio():
+    riscos = riscos_from_text(
+        "Leiloeiro público oficial João da Silva.",
+        page_text="Leiloeiro: Maria Souza — Zuk Leilões",
+    )
+    assert riscos["leiloeiro_ok"] is False
+
+
+def test_sem_texto_nao_inventa_citacao():
+    riscos = riscos_from_text("Apartamento com 2 dormitórios, vaga de garagem.")
+    assert "citacao" not in riscos
+    assert "nao_entrar" not in riscos
+
+
+if __name__ == "__main__":
+    test_nao_citado_e_cnj()
+    test_cnj_compacto_formata()
+    test_citado_regularmente_nao_trava()
+    test_citacao_por_edital()
+    test_usufruto_na_matricula()
+    test_livre_de_usufruto_nao_marca()
+    test_meacao_e_conjuge()
+    test_conjuge_do_arrematante_nao_e_meacao()
+    test_leiloeiro_diverge_entre_edital_e_anuncio()
+    test_sem_texto_nao_inventa_citacao()
+    print("ok")

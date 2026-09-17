@@ -444,6 +444,16 @@ a {
   padding: 0.1rem 0.4rem;
 }
 
+.risk-tag {
+  font-size: 0.7rem;
+  color: #7a1f1f;
+  border: 1px solid #d9a3a3;
+  background: #f8ecec;
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+  margin-left: 0.35rem;
+}
+
 .card-meta {
   margin-top: 0.45rem;
   font-size: 0.875rem;
