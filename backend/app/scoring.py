@@ -49,19 +49,34 @@ def _fator_desconto(
     return nota, detalhe
 
 
-def _fator_risco(blob: str) -> tuple[float, str]:
-    desocupado = bool(RE_DESOCUPADO.search(blob))
-    ocupado = bool(RE_OCUPADO.search(blob)) and not desocupado
-    divida = bool(RE_DIVIDA.search(blob))
+def _fator_risco(
+    blob: str,
+    ocupacao: Optional[str] = None,
+    tem_divida: Optional[bool] = None,
+) -> tuple[float, str]:
+    if ocupacao == "desocupado":
+        desocupado, ocupado = True, False
+    elif ocupacao == "ocupado":
+        desocupado, ocupado = False, True
+    else:
+        desocupado = bool(RE_DESOCUPADO.search(blob))
+        ocupado = bool(RE_OCUPADO.search(blob)) and not desocupado
+    if tem_divida is True:
+        divida = True
+    elif tem_divida is False:
+        divida = False
+    else:
+        divida = bool(RE_DIVIDA.search(blob))
+    fonte_risco = "edital" if ocupacao or tem_divida is not None else "anúncio"
     if ocupado and divida:
-        return -1.0, "ocupado e com menção de dívida — risco jurídico alto"
+        return -1.0, f"ocupado e com menção de dívida — risco jurídico alto ({fonte_risco})"
     if ocupado:
-        return -0.6, "ocupado — provável ação de desocupação"
+        return -0.6, f"ocupado — provável ação de desocupação ({fonte_risco})"
     if divida:
-        return -0.4, "menção de dívida/débito no anúncio"
+        return -0.4, f"menção de dívida/débito no {fonte_risco}"
     if desocupado:
-        return 0.3, "desocupado (declarado no anúncio)"
-    return 0.0, "sem menção de ocupação/dívida no anúncio — verificar edital"
+        return 0.3, f"desocupado (declarado no {fonte_risco})"
+    return 0.0, "sem menção de ocupação/dívida — verificar edital"
 
 
 def _fator_praca(blob: str) -> tuple[float, Optional[str]]:
@@ -84,13 +99,15 @@ def compute_score(
     minimum_bid: Optional[float] = None,
     reference_value: Optional[float] = None,
     valor_mercado_estimado: Optional[float] = None,
+    ocupacao: Optional[str] = None,
+    tem_divida: Optional[bool] = None,
 ) -> dict[str, Any]:
     blob = f"{title} {description or ''}"
 
     nota_desconto, detalhe_desconto = _fator_desconto(
         current_bid, minimum_bid, reference_value, valor_mercado_estimado
     )
-    nota_risco, detalhe_risco = _fator_risco(blob)
+    nota_risco, detalhe_risco = _fator_risco(blob, ocupacao=ocupacao, tem_divida=tem_divida)
     nota_praca, detalhe_praca = _fator_praca(blob)
 
     fatores = [(PESO_DESCONTO, nota_desconto), (PESO_RISCO, nota_risco), (PESO_PRACA, nota_praca)]

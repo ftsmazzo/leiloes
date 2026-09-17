@@ -85,11 +85,32 @@ def test_none_bid_does_not_wipe_previous():
     assert lot.raw_data and "Sertãozinho" in lot.raw_data
 
 
+def test_parecer_and_avaliado_survive_rescrape():
+    session = _session()
+    persist_auctions(
+        session,
+        [
+            _auction(
+                100000,
+                "Casa antiga",
+                raw_data='{"score": 83, "avaliado_em": "2026-09-17T20:00:00Z", "parecer": "Score 83/100.", "avaliacao_edital": 400000}',
+            )
+        ],
+    )
+    session.commit()
+    persist_auctions(session, [_auction(110000, "Casa atualizada", raw_data='{"score": 50, "cidade": "Sertãozinho"}')])
+    session.commit()
+    lot = session.execute(select(LotModel)).scalar_one()
+    assert "parecer" in (lot.raw_data or "")
+    assert "avaliado_em" in (lot.raw_data or "")
+    assert "400000" in (lot.raw_data or "")
+    assert lot.current_bid == 110000
+
+
 def test_alertado_flag_survives_rescrape():
     session = _session()
     persist_auctions(session, [_auction(100000, "Casa antiga", raw_data='{"score": 80, "alertado": true}')])
     session.commit()
-    # novo scrape recalcula score/raw_data do zero, sem saber que ja foi alertado
     persist_auctions(session, [_auction(90000, "Casa atualizada", raw_data='{"score": 85}')])
     session.commit()
 
@@ -111,6 +132,7 @@ def test_persist_auctions_returns_touched_lots_with_source():
 if __name__ == "__main__":
     test_rescrape_updates_bid_and_title_without_duplicate()
     test_none_bid_does_not_wipe_previous()
+    test_parecer_and_avaliado_survive_rescrape()
     test_alertado_flag_survives_rescrape()
     test_persist_auctions_returns_touched_lots_with_source()
     print("ok")

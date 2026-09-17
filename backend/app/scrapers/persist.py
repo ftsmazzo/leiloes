@@ -11,12 +11,26 @@ from sqlalchemy.orm import Session
 
 from app.models.schemas import AuctionModel, LotModel
 from app.scrapers.base import ScrapedAuction, ScrapedLot
+from app.scrapers.extract import extra_json
+from app.scoring import compute_score
+
+
+KEEP_RAW_KEYS = (
+    "alertado",
+    "parecer",
+    "docs",
+    "avaliado_em",
+    "ocupacao",
+    "dividas",
+    "avaliacao_edital",
+    "edital_sem_texto",
+)
 
 
 def _merge_raw_data(existing_raw: str | None, new_raw: str) -> str:
-    """raw_data é recalculado do zero a cada scrape — preserva o flag
-    "alertado" do registro antigo, senão o alerta de oportunidade (#34)
-    reenviaria a cada rodada pro mesmo lote."""
+    """raw_data é recalculado do zero a cada scrape — preserva alerta e
+    avaliação sob demanda (#solicitar-avaliacao), senão o re-scrape apagaria
+    o parecer e reenviaria Telegram."""
     if not existing_raw:
         return new_raw
     try:
@@ -24,10 +38,46 @@ def _merge_raw_data(existing_raw: str | None, new_raw: str) -> str:
         new = json.loads(new_raw)
     except json.JSONDecodeError:
         return new_raw
-    if isinstance(old, dict) and isinstance(new, dict) and old.get("alertado"):
-        new["alertado"] = True
-        return json.dumps(new, ensure_ascii=False)
-    return new_raw
+    if not (isinstance(old, dict) and isinstance(new, dict)):
+        return new_raw
+    for key in KEEP_RAW_KEYS:
+        if old.get(key) not in (None, "", [], {}) and key not in new:
+            new[key] = old[key]
+    if old.get("avaliado_em") and "avaliado_em" not in new:
+        new["avaliado_em"] = old["avaliado_em"]
+    return json.dumps(new, ensure_ascii=False)
+
+
+def _refresh_score_if_avaliado(lot: LotModel) -> None:
+    """Lote já avaliado: recorre o score com o lance novo e os dados do edital."""
+    if not lot.raw_data:
+        return
+    try:
+        extra = json.loads(lot.raw_data)
+    except json.JSONDecodeError:
+        return
+    if not isinstance(extra, dict) or not extra.get("avaliado_em"):
+        return
+    ref = extra.get("avaliacao_edital")
+    if not isinstance(ref, (int, float)):
+        ref = lot.reference_value
+    ocupacao = extra.get("ocupacao") if extra.get("ocupacao") in ("ocupado", "desocupado") else None
+    tem_divida = True if extra.get("dividas") else None
+    mercado = extra.get("valor_mercado_estimado")
+    info = compute_score(
+        title=lot.title,
+        description=lot.description,
+        current_bid=lot.current_bid,
+        minimum_bid=lot.minimum_bid,
+        reference_value=ref if isinstance(ref, (int, float)) else None,
+        valor_mercado_estimado=mercado if isinstance(mercado, (int, float)) else None,
+        ocupacao=ocupacao,
+        tem_divida=tem_divida,
+    )
+    extra["score"] = info["score"]
+    extra["score_tem_comparacao_preco"] = info["tem_comparacao_preco"]
+    extra["score_motivos"] = info["motivos"]
+    lot.raw_data = extra_json(extra)
 
 
 def apply_lot(lot: LotModel, sl: ScrapedLot) -> None:
@@ -46,6 +96,7 @@ def apply_lot(lot: LotModel, sl: ScrapedLot) -> None:
         lot.current_bid = sl.current_bid
     if sl.reference_value is not None:
         lot.reference_value = sl.reference_value
+    _refresh_score_if_avaliado(lot)
     lot.updated_at = datetime.utcnow()
 
 
