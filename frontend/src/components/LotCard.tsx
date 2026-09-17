@@ -17,6 +17,9 @@ export type Lot = {
   foto: string | null;
   valor_m2_regiao: number | null;
   valor_mercado_estimado: number | null;
+  score: number | null;
+  score_tem_comparacao_preco: boolean | null;
+  score_motivos: string[];
   current_bid: number | null;
   minimum_bid: number | null;
   reference_value: number | null;
@@ -40,6 +43,16 @@ export function lotHeadline(lot: Lot): string {
   return [tipo, lot.bairro, lot.cidade].filter(Boolean).join(' · ') || 'Lote';
 }
 
+export type ScoreTier = 'alto' | 'baixo' | 'neutro' | 'sem-preco';
+
+export function scoreTier(lot: Lot): ScoreTier {
+  if (lot.score == null) return 'neutro';
+  if (!lot.score_tem_comparacao_preco) return 'sem-preco';
+  if (lot.score >= 65) return 'alto';
+  if (lot.score <= 35) return 'baixo';
+  return 'neutro';
+}
+
 export function LotCard({ lot }: { lot: Lot }) {
   const site = httpUrl(lot.url);
   const bid = lot.current_bid ?? lot.minimum_bid;
@@ -51,8 +64,26 @@ export function LotCard({ lot }: { lot: Lot }) {
         <img className="lot-card-photo" src={lot.foto} alt="" width={320} height={180} loading="lazy" />
       ) : null}
       <div className="lot-card-body">
-        <span className="source-tag">{lot.source}</span>
+        <div className="lot-card-head">
+          <span className="source-tag">{lot.source}</span>
+          {lot.score != null ? (
+            <span
+              className="score-badge"
+              data-tier={scoreTier(lot)}
+              title={lot.score_tem_comparacao_preco ? 'Score de oportunidade' : 'Score parcial — sem referência de preço pra comparar'}
+            >
+              {lot.score}
+            </span>
+          ) : null}
+        </div>
         <h2>{headline}</h2>
+        {lot.score_motivos.length > 0 ? (
+          <ul className="lot-motivos">
+            {lot.score_motivos.slice(0, 2).map((motivo) => (
+              <li key={motivo}>{motivo}</li>
+            ))}
+          </ul>
+        ) : null}
         <dl className="lot-dl">
           {lot.endereco ? (
             <>

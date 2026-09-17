@@ -199,6 +199,49 @@ a {
   font-weight: 600;
 }
 
+.lot-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.score-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  background: transparent;
+}
+
+.score-badge[data-tier='alto'] {
+  background: var(--ok-bg);
+  color: var(--ok-ink);
+  border-color: transparent;
+}
+
+.score-badge[data-tier='baixo'] {
+  background: #fdecea;
+  color: var(--danger);
+  border-color: transparent;
+}
+
+.lot-motivos {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
 @keyframes card-in {
   from {
     opacity: 0;
@@ -245,6 +288,20 @@ a {
 .field select:focus {
   outline: 2px solid var(--ink);
   outline-offset: 1px;
+}
+
+.field-checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  align-self: flex-end;
+  padding-bottom: 0.55rem;
+}
+
+.field-checkbox input {
+  min-width: 0;
+  width: 1rem;
+  height: 1rem;
 }
 
 .tabs {

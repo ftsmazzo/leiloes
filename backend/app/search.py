@@ -82,6 +82,18 @@ def card_fields(lot: Any) -> dict[str, Any]:
     )
 
 
+def score_of(lot: Any) -> int | None:
+    score = raw_dict(lot).get("score")
+    return score if isinstance(score, int) else None
+
+
+def score_sort_key(lot: Any) -> tuple[bool, int]:
+    """Chave pra sorted(..., key=score_sort_key): maior score primeiro,
+    lote sem score calculado ainda vai pro fim (não empata com score 0)."""
+    score = score_of(lot)
+    return (score is None, -(score or 0))
+
+
 def foto_of(lot: Any) -> str | None:
     foto = raw_dict(lot).get("foto")
     if not isinstance(foto, str) or not foto.startswith("http"):

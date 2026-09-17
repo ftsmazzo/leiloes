@@ -9,7 +9,7 @@ from app.models.database import get_db
 from app.models.schemas import AuctionModel, LotModel
 from app.api.schemas import AuctionOut, AuctionDetailOut, LotOut
 from app.api.present import lot_to_out
-from app.search import cidade_of, filter_lots, tipo_of
+from app.search import cidade_of, filter_lots, score_sort_key, tipo_of
 from app.scrapers.registry import source_names
 from app.scrapers.extract import extract_status
 
@@ -81,6 +81,7 @@ async def list_lots(
     tipo: Optional[str] = Query(None, description="casa, apartamento, terreno, imovel…"),
     teto: Optional[float] = Query(None, ge=0, description="Lance atual ou mínimo até este valor"),
     q: Optional[str] = Query(None, description="Texto livre em título, endereço e cidade"),
+    sort: Optional[str] = Query(None, description="score = ordenar por score de oportunidade (desc)"),
     limit: int = Query(80, le=200),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -88,6 +89,7 @@ async def list_lots(
     cidade = cidade.strip() if cidade else None
     tipo = tipo.strip() if tipo else None
     q_txt = q.strip() if q else None
+    by_score = sort == "score"
     stmt = (
         select(LotModel, AuctionModel.source)
         .join(AuctionModel, LotModel.auction_id == AuctionModel.id)
@@ -107,7 +109,8 @@ async def list_lots(
             )
         )
     text_filter = bool(cidade or tipo or q_txt)
-    if not text_filter:
+    python_pass = text_filter or by_score
+    if not python_pass:
         stmt = stmt.limit(limit).offset(offset)
     result = await db.execute(stmt)
     rows = list(result.all())
@@ -115,6 +118,10 @@ async def list_lots(
         lots_only = [row[0] for row in rows]
         kept_ids = {lot.id for lot in filter_lots(lots_only, cidade=cidade, tipo=tipo, q=q_txt)}
         rows = [row for row in rows if row[0].id in kept_ids]
+    if by_score:
+        # score fica em raw_data (não é coluna) — não dá pra ordenar em SQL
+        rows = sorted(rows, key=lambda row: score_sort_key(row[0]))
+    if python_pass:
         rows = rows[offset : offset + limit]
     return [lot_to_out(lot, src) for lot, src in rows]
 
