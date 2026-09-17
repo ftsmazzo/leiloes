@@ -46,7 +46,7 @@ def test_score_prioriza_mercado_sobre_avaliacao_do_edital():
 def test_score_fallback_para_avaliacao_do_edital_sem_mercado():
     result = compute_score(title="Apartamento", current_bid=100000, reference_value=150000)
     assert result["tem_comparacao_preco"] is True
-    assert any("avaliação do edital" in m for m in result["motivos"])
+    assert any("abaixo da avaliação" in m for m in result["motivos"])
 
 
 def test_fator_risco_ocupado_penaliza():
@@ -272,6 +272,38 @@ def test_docs_limitados_alerta_sem_teto_de_meacao():
     assert not any("vende 100%" in m for m in result["motivos"])
 
 
+def test_segunda_praca_desconto_pelo_valor_atual():
+    result = compute_score(
+        title="Terreno Porto Ferreira",
+        current_bid=4_207_866.06,
+        minimum_bid=7_013_110.10,
+        reference_value=7_013_110.10,
+        fonte_avaliacao="laudo",
+        tipo="terreno",
+    )
+    assert any("40% abaixo da avaliação" in m for m in result["motivos"])
+    assert not any(m.startswith("0% abaixo") for m in result["motivos"])
+
+
+def test_docs_limitados_nao_afirma_ocupacao_nem_condo():
+    result = compute_score(
+        title="Terreno",
+        description="Imóvel desocupado, sem débitos condominiais. 2ª praça.",
+        current_bid=4_207_866.06,
+        minimum_bid=7_013_110.10,
+        reference_value=7_013_110.10,
+        ocupacao="desocupado",
+        tem_divida=False,
+        tipo="terreno",
+        fonte_avaliacao="laudo",
+        riscos={"docs_limitados": True},
+    )
+    assert any("40% abaixo" in m for m in result["motivos"])
+    assert not any(m.startswith("desocupado") for m in result["motivos"])
+    assert not any("sem débitos de condomínio" in m for m in result["motivos"])
+    assert any("análise limitada" in m for m in result["motivos"])
+
+
 if __name__ == "__main__":
     test_score_sem_nenhuma_referencia_de_preco_fica_parcial()
     test_score_com_desconto_grande_sobe_e_avisa_fonte()
@@ -293,4 +325,6 @@ if __name__ == "__main__":
     test_usufruto_e_meacao_limitam_score()
     test_citado_nao_aplica_teto()
     test_docs_limitados_alerta_sem_teto_de_meacao()
+    test_segunda_praca_desconto_pelo_valor_atual()
+    test_docs_limitados_nao_afirma_ocupacao_nem_condo()
     print("ok")

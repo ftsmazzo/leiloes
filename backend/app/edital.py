@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from io import BytesIO
 from typing import Any, Optional
 from urllib.parse import urljoin
@@ -21,8 +21,7 @@ from pypdf import PdfReader
 from app.scrapers.extract import extra_json, leilao_status, parse_br_currency
 from app.scrapers.listing import HEADERS, href_of, text_of
 from app.juridico import riscos_from_text
-from app.datajud import consultar_datajud, merge_riscos
-from app.scoring import RE_DESOCUPADO, RE_DIVIDA, RE_OCUPADO, compute_score
+from app.scoring import RE_DESOCUPADO, RE_OCUPADO
 
 MAX_PDFS = 4
 MAX_PDF_BYTES = 8_000_000
@@ -558,157 +557,22 @@ def avaliar_lote(
     fetch_datajud=None,
     write_ai: bool = True,
 ) -> dict[str, Any]:
-    """Lê a página do lote, PDFs públicos, devolve extra enriquecido. Não inventa."""
-    html = fetch_page(url)
-    page_text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
-    status = leilao_status(title, description, page_text[:4000])
-    docs = collect_pdfs(html, url)
-    texts: list[str] = []
-    scanned_any = False
-    stored_docs: list[dict[str, Any]] = []
-    for doc in docs:
-        item = dict(doc)
-        try:
-            data = fetch_file(doc["url"])
-            text, scanned = extract_pdf_text(data)
-        except Exception:
-            text, scanned = "", True
-        if scanned:
-            scanned_any = True
-            item["scanned"] = True
-        item["chars"] = len(text)
-        stored_docs.append(item)
-        if text:
-            texts.append(f"[{doc['tipo']}] {text}")
+    """Fachada: a ordem mora em app.orquestrador (página → PDF → DataJud → score)."""
+    from app.orquestrador import avaliar
 
-    blob = "\n".join(texts)
-    extracted = fields_from_text(
-        blob,
-        page_text[:8000],
-        source=str(extra.get("source") or ""),
-    )
-    out = dict(extra)
-    out["docs"] = stored_docs
-    out["avaliado_em"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    out["status"] = status
-    for key in (
-        "avaliacao_edital",
-        "avaliacao_fonte",
-        "valor_venal_imovel",
-        "valor_venal_terreno",
-        "valor_venal_edificacao",
-        "area_edificacao",
-        "area_terreno",
-        "area",
-        "avaliacao_data",
-        "avaliacao_data_origem",
-        "processo_cnj",
-    ):
-        if extracted.get(key) not in (None, "", [], {}):
-            out[key] = extracted[key]
-    if extracted.get("ocupacao"):
-        out["ocupacao"] = extracted["ocupacao"]
-    if extracted.get("dividas"):
-        out["dividas"] = extracted["dividas"]
-    if stored_docs and not blob.strip():
-        out["edital_sem_texto"] = True
-
-    page_precos = precos_from_page(page_text, html=html)
-    if page_precos.get("lance_pagina"):
-        out["lance_pagina"] = page_precos["lance_pagina"]
-    if page_precos.get("avaliacao_pagina"):
-        out["avaliacao_pagina"] = page_precos["avaliacao_pagina"]
-        out["avaliacao_edital"] = page_precos["avaliacao_pagina"]
-        if not out.get("avaliacao_fonte"):
-            out["avaliacao_fonte"] = "laudo"
-    lance_score = page_precos.get("lance_pagina") or current_bid
-
-    riscos = dict(extracted.get("riscos") or {})
-    cnj = riscos.get("processo_cnj")
-    if isinstance(cnj, str) and cnj:
-        dj = consultar_datajud(cnj, fetch=fetch_datajud)
-        riscos = merge_riscos(riscos, dj)
-    tem_peca = any(
-        isinstance(d, dict)
-        and d.get("tipo") in ("laudo", "matricula", "penhora")
-        and int(d.get("chars") or 0) >= 80
-        and not d.get("scanned")
-        for d in stored_docs
-    )
-    if not tem_peca:
-        out["docs_limitados"] = True
-        riscos["docs_limitados"] = True
-    if riscos:
-        out["riscos"] = riscos
-        if riscos.get("processo_cnj"):
-            out["processo_cnj"] = riscos["processo_cnj"]
-        if riscos.get("nao_entrar"):
-            out["nao_entrar"] = True
-        else:
-            out.pop("nao_entrar", None)
-
-    ref = out.get("avaliacao_edital") or page_precos.get("avaliacao_pagina") or reference_value
-    tem_divida = extracted.get("tem_divida")
-    ocupacao = out.get("ocupacao") if isinstance(out.get("ocupacao"), str) else None
-    fonte = out.get("avaliacao_fonte") if out.get("avaliacao_fonte") in ("laudo", "venal_imovel") else None
-    desc = " ".join(p for p in (description, blob[:3000]) if p)
-    score_info = compute_score(
+    return avaliar(
         title=title,
-        description=desc,
-        current_bid=lance_score,
+        description=description,
+        url=url,
+        current_bid=current_bid,
         minimum_bid=minimum_bid,
-        reference_value=ref if isinstance(ref, (int, float)) else None,
-        valor_mercado_estimado=out.get("valor_mercado_estimado")
-        if isinstance(out.get("valor_mercado_estimado"), (int, float))
-        else None,
-        ocupacao=ocupacao,
-        tem_divida=tem_divida if isinstance(tem_divida, bool) else None,
-        fonte_avaliacao=fonte,
-        dividas=out.get("dividas") if isinstance(out.get("dividas"), dict) else None,
-        avaliacao_data=out.get("avaliacao_data"),
-        avaliacao_data_origem=out.get("avaliacao_data_origem")
-        if out.get("avaliacao_data_origem") in ("laudo", "processo")
-        else None,
-        tipo=out.get("tipo") if isinstance(out.get("tipo"), str) else None,
-        riscos=riscos or None,
+        reference_value=reference_value,
+        extra=extra,
+        fetch_page=fetch_page,
+        fetch_file=fetch_file,
+        fetch_datajud=fetch_datajud,
+        write_ai=write_ai,
     )
-    out["score"] = score_info["score"]
-    out["score_tem_comparacao_preco"] = score_info["tem_comparacao_preco"]
-    out["score_motivos"] = score_info["motivos"]
-
-    facts = {
-        "score": out["score"],
-        "tem_comparacao_preco": out["score_tem_comparacao_preco"],
-        "motivos": out["score_motivos"],
-        "avaliacao_edital": out.get("avaliacao_edital"),
-        "avaliacao_fonte": out.get("avaliacao_fonte"),
-        "valor_venal_terreno": out.get("valor_venal_terreno"),
-        "valor_venal_imovel": out.get("valor_venal_imovel"),
-        "area_edificacao": out.get("area_edificacao"),
-        "area_terreno": out.get("area_terreno"),
-        "avaliacao_data": out.get("avaliacao_data"),
-        "avaliacao_data_origem": out.get("avaliacao_data_origem"),
-        "lance_atual": lance_score if lance_score is not None else minimum_bid,
-        "status": status,
-        "ocupacao": ocupacao,
-        "dividas": out.get("dividas"),
-        "docs": stored_docs,
-        "scanned": scanned_any,
-        "docs_limitados": bool(out.get("docs_limitados")),
-        "cidade": out.get("cidade"),
-        "headline": out.get("headline"),
-        "processo_cnj": out.get("processo_cnj"),
-        "riscos": riscos or None,
-        "nao_entrar": bool(out.get("nao_entrar")),
-    }
-    analise_limitada = bool(out.get("docs_limitados") or out.get("edital_sem_texto") or scanned_any)
-    parecer = _mistral_parecer(facts) if write_ai and not analise_limitada else None
-    if parecer and status != "encerrado" and re.search(r"\barrematad", parecer, re.I):
-        parecer = None
-    if parecer and not out.get("nao_entrar") and re.search(r"n[aã]o entre", parecer, re.I):
-        parecer = None
-    out["parecer"] = parecer or parecer_from_facts(facts)
-    return {k: v for k, v in out.items() if v not in (None, "", [], {})}
 
 
 def apply_avaliacao_to_lot(lot, extra: dict[str, Any]) -> None:

@@ -37,7 +37,10 @@ TETO_USUFRUTO = 28
 TETO_MEACAO = 28
 
 RE_OCUPADO = re.compile(r"\bocupad[oa]\b", re.I)
-RE_DESOCUPADO = re.compile(r"\b(?:des|não\s+)ocupad[oa]|\blivre\b|\bvazi[oa]\b", re.I)
+RE_DESOCUPADO = re.compile(
+    r"\b(?:desocupad[oa]|n[aã]o\s+ocupad[oa]|im[oó]vel\s+vazi[oa])\b",
+    re.I,
+)
 RE_DIVIDA = re.compile(r"d[ií]vida|d[eé]bito|em atraso|inadimpl[êe]nc", re.I)
 RE_PRACA = re.compile(r"(\d)\s*[ªa]\s*pra[çc]a", re.I)
 RE_CONDO_MENCAO = re.compile(
@@ -69,11 +72,15 @@ def _money_key(dividas: Optional[dict[str, Any]], key: str) -> float:
 
 
 def _lance_inicial(current_bid: Optional[float], minimum_bid: Optional[float]) -> Optional[float]:
-    if minimum_bid is not None and minimum_bid > 0:
-        return minimum_bid
-    if current_bid is not None and current_bid > 0:
-        return current_bid
-    return None
+    """Oferta da praça ativa. Se o atual caiu (2ª praça), usa o atual;
+    se subiu (concorrência), o desconto continua pelo inicial."""
+    atual = current_bid if current_bid is not None and current_bid > 0 else None
+    inicial = minimum_bid if minimum_bid is not None and minimum_bid > 0 else None
+    if atual and inicial:
+        if atual < inicial * 0.95:
+            return atual
+        return inicial
+    return inicial or atual
 
 
 def _lance_atual(current_bid: Optional[float], minimum_bid: Optional[float]) -> Optional[float]:
@@ -117,7 +124,7 @@ def _fator_desconto(
         rotulo = (
             "valor venal do imóvel (IPTU)"
             if fonte == FONTE_VENAL
-            else "avaliação do edital"
+            else "avaliação"
         )
         referencia = reference_value
     else:
@@ -246,6 +253,10 @@ def _fator_divida(
         if iptu > 0
         else None
     )
+    if (tipo or "").lower() == "terreno":
+        if iptu_txt:
+            return 0.2, iptu_txt
+        return 0.0, None
 
     if condo > 0 and lance and lance > 0:
         ratio = condo / lance
@@ -471,15 +482,31 @@ def compute_score(
         hoje=hoje,
     )
     concorrencia = _motivo_concorrencia(current_bid, minimum_bid)
-    nota_risco, detalhe_risco = _fator_risco(blob, ocupacao=ocupacao)
-    nota_divida, detalhe_divida = _fator_divida(
-        blob,
-        tem_divida=tem_divida,
-        dividas=dividas,
-        current_bid=current_bid,
-        minimum_bid=minimum_bid,
-        tipo=tipo,
-    )
+    limitados = isinstance(riscos, dict) and riscos.get("docs_limitados")
+    if limitados:
+        nota_risco, detalhe_risco = None, None
+        condo_valor = _money_key(dividas, "condominio") if isinstance(dividas, dict) else 0.0
+        if condo_valor > 0:
+            nota_divida, detalhe_divida = _fator_divida(
+                blob,
+                tem_divida=True,
+                dividas=dividas,
+                current_bid=current_bid,
+                minimum_bid=minimum_bid,
+                tipo=tipo,
+            )
+        else:
+            nota_divida, detalhe_divida = None, None
+    else:
+        nota_risco, detalhe_risco = _fator_risco(blob, ocupacao=ocupacao)
+        nota_divida, detalhe_divida = _fator_divida(
+            blob,
+            tem_divida=tem_divida,
+            dividas=dividas,
+            current_bid=current_bid,
+            minimum_bid=minimum_bid,
+            tipo=tipo,
+        )
     nota_idade, detalhe_idade = _fator_idade(
         avaliacao_data, origem=avaliacao_data_origem, hoje=hoje
     )

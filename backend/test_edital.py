@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from app.orquestrador import snapshot_preco
 from app.edital import (
     avaliar_lote,
     avaliacao_data_from_text,
@@ -272,6 +273,20 @@ def test_precos_from_html_grupo_lance_nao_usa_1a_praca():
     assert precos["avaliacao_pagina"] == 7013110.1
 
 
+def test_snapshot_pagina_ganha_do_scrape_da_1a_praca():
+    snap = snapshot_preco(
+        {"lance_pagina": 4207866.06, "avaliacao_pagina": 7013110.1},
+        {"avaliacao_edital": 7013110.1},
+        current_bid=7013110.1,
+        minimum_bid=7013110.1,
+        reference_value=7013110.1,
+    )
+    assert snap["lance"] == 4207866.06
+    assert snap["inicial"] == 4207866.06
+    assert snap["avaliacao"] == 7013110.1
+    assert snap["fonte"] == "pagina"
+
+
 def test_avaliar_lote_respeita_valor_atual_da_pagina():
     html = (ROOT / "fixtures" / "lance_item.html").read_text(encoding="utf-8")
     extra = avaliar_lote(
@@ -288,7 +303,12 @@ def test_avaliar_lote_respeita_valor_atual_da_pagina():
     )
     assert extra["lance_pagina"] == 4207866.06
     assert extra["avaliacao_edital"] == 7013110.1
+    assert extra["preco_fonte"] == "pagina"
     assert extra["score"] > 50
+    assert any("40% abaixo" in m for m in extra["score_motivos"])
+    assert not any(m.startswith("0% abaixo") for m in extra["score_motivos"])
+    assert not any(m.startswith("desocupado") for m in extra["score_motivos"])
+    assert not any("sem débitos de condomínio" in m for m in extra["score_motivos"])
 
 
 def test_parecer_diz_quando_faltou_documento_e_datajud():
@@ -374,6 +394,7 @@ if __name__ == "__main__":
     test_fracao_ideal_do_lote_nao_vira_meacao()
     test_precos_from_page_separa_lance_e_avaliacao()
     test_precos_from_html_grupo_lance_nao_usa_1a_praca()
+    test_snapshot_pagina_ganha_do_scrape_da_1a_praca()
     test_avaliar_lote_respeita_valor_atual_da_pagina()
     test_parecer_diz_quando_faltou_documento_e_datajud()
     test_avaliar_lote_consulta_datajud_injetado()
