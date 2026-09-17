@@ -1,12 +1,13 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database import get_db
 from app.models.schemas import AuctionModel, LotModel
 from app.api.schemas import AuctionOut, AuctionDetailOut, LotOut
+from app.search import filter_lots
 
 router = APIRouter(prefix="/api", tags=["api"])
 
@@ -70,18 +71,36 @@ async def get_auction(auction_id: int, db: AsyncSession = Depends(get_db)):
 async def list_lots(
     auction_id: Optional[int] = Query(None),
     source: Optional[str] = Query(None),
+    cidade: Optional[str] = Query(None, description="Cidade gravada pelo scraper (raw_data/título)"),
+    tipo: Optional[str] = Query(None, description="Casa, terreno, imóvel — casa com category/título"),
+    teto: Optional[float] = Query(None, ge=0, description="Lance atual ou mínimo até este valor"),
     limit: int = Query(50, le=100),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
-    q = select(LotModel).order_by(LotModel.updated_at.desc()).limit(limit).offset(offset)
+    cidade = cidade.strip() if cidade else None
+    tipo = tipo.strip() if tipo else None
+    q = select(LotModel).order_by(LotModel.updated_at.desc())
     if auction_id:
         q = q.where(LotModel.auction_id == auction_id)
     if source:
         q = q.join(AuctionModel, LotModel.auction_id == AuctionModel.id).where(AuctionModel.source == source)
+    if teto is not None:
+        q = q.where(
+            or_(
+                LotModel.current_bid <= teto,
+                and_(LotModel.current_bid.is_(None), LotModel.minimum_bid <= teto),
+            )
+        )
+    text_filter = bool(cidade or tipo)
+    if not text_filter:
+        q = q.limit(limit).offset(offset)
     result = await db.execute(q)
-    lots = result.scalars().all()
-    return [LotOut.model_validate(l) for l in lots]
+    lots = list(result.scalars().all())
+    if text_filter:
+        lots = filter_lots(lots, cidade=cidade, tipo=tipo)
+        lots = lots[offset : offset + limit]
+    return [LotOut.model_validate(lot) for lot in lots]
 
 
 @router.get("/stats")
