@@ -22,6 +22,9 @@ class LotOut(BaseModel):
     foto: Optional[str] = None
     valor_m2_regiao: Optional[float] = None
     valor_mercado_estimado: Optional[float] = None
+    score: Optional[int] = None
+    score_tem_comparacao_preco: Optional[bool] = None
+    score_motivos: list[str] = []
     minimum_bid: Optional[float] = None
     current_bid: Optional[float] = None
     reference_value: Optional[float] = None
