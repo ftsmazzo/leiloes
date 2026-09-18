@@ -28,7 +28,7 @@ def test_lot_to_out_exposes_source_and_cidade():
 
 
 def test_registry_sources_are_catalog_tabs():
-    assert source_names() == ["calil", "vegas", "zuk", "mega", "lance"]
+    assert source_names() == ["calil", "vegas", "zuk", "mega", "lance", "trt5"]
 
 
 def test_lot_to_out_exposes_market_reference_when_present():
