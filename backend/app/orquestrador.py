@@ -20,9 +20,12 @@ from bs4 import BeautifulSoup
 
 from app import edital
 from app.datajud import consultar_datajud, merge_riscos
+from app.ocr import ocr_pdf
 from app.scrapers.extract import leilao_status, tipo_from_text
 from app.scrapers.listing import merge_pracas, pracas_from_html
 from app.scoring import compute_score
+
+MAX_ANEXOS = 3
 
 CAMPOS_PDF = (
     "avaliacao_edital",
@@ -81,7 +84,32 @@ def _tem_peca_util(docs: list[dict[str, Any]]) -> bool:
     )
 
 
-def _ler_pdfs(html: str, url: str, fetch_file) -> tuple[list[dict[str, Any]], str, bool]:
+def _ler_um(data: bytes, item: dict[str, Any], ocr_fn) -> tuple[dict[str, Any], str, bool]:
+    try:
+        text, scanned = edital.extract_pdf_text(data)
+    except Exception:
+        text, scanned = "", True
+    if scanned and ocr_fn:
+        ocr_text = (ocr_fn(data) or "").strip()
+        if len(ocr_text) >= 80:
+            text, scanned = ocr_text, False
+            item["ocr"] = True
+        elif ocr_text:
+            text = ocr_text
+            item["ocr"] = True
+    if scanned:
+        item["scanned"] = True
+    item["chars"] = len(text)
+    return item, text, scanned
+
+
+def _ler_pdfs(
+    html: str,
+    url: str,
+    fetch_file,
+    anexos: Optional[list[tuple[str, bytes]]] = None,
+    ocr_fn=None,
+) -> tuple[list[dict[str, Any]], str, bool]:
     docs = edital.collect_pdfs(html, url)
     texts: list[str] = []
     scanned_any = False
@@ -90,16 +118,25 @@ def _ler_pdfs(html: str, url: str, fetch_file) -> tuple[list[dict[str, Any]], st
         item = dict(doc)
         try:
             data = fetch_file(doc["url"])
-            text, scanned = edital.extract_pdf_text(data)
         except Exception:
-            text, scanned = "", True
+            data = b""
+        item, text, scanned = _ler_um(data, item, ocr_fn)
         if scanned:
             scanned_any = True
-            item["scanned"] = True
-        item["chars"] = len(text)
         stored.append(item)
         if text:
             texts.append(f"[{doc['tipo']}] {text}")
+    for name, data in (anexos or [])[:MAX_ANEXOS]:
+        if not data:
+            continue
+        tipo = edital.classify_doc(name or "", name or "")
+        item = {"tipo": tipo, "label": (name or tipo)[:80], "anexo": True}
+        item, text, scanned = _ler_um(data[: edital.MAX_PDF_BYTES], item, ocr_fn)
+        if scanned:
+            scanned_any = True
+        stored.append(item)
+        if text:
+            texts.append(f"[{tipo}] {text}")
     return stored, "\n".join(texts), scanned_any
 
 
@@ -116,9 +153,12 @@ def avaliar(
     fetch_file=None,
     fetch_datajud=None,
     write_ai: bool = True,
+    anexos: Optional[list[tuple[str, bytes]]] = None,
+    ocr=None,
 ) -> dict[str, Any]:
     fetch_page = fetch_page or edital.fetch_html
     fetch_file = fetch_file or edital.fetch_pdf
+    ocr_fn = ocr if ocr is not None else ocr_pdf
 
     html = fetch_page(url)
     page_text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
@@ -128,8 +168,8 @@ def avaliar(
     page_precos = edital.precos_from_page(page_text, html=html)
     page_pracas = pracas_from_html(html)
 
-    # 2. PDFs públicos — fatos, não preço
-    stored_docs, blob, scanned_any = _ler_pdfs(html, url, fetch_file)
+    # 2. PDFs públicos + anexos do usuário — fatos, não preço
+    stored_docs, blob, scanned_any = _ler_pdfs(html, url, fetch_file, anexos=anexos, ocr_fn=ocr_fn)
     extracted = edital.fields_from_text(
         blob,
         page_text[:8000],

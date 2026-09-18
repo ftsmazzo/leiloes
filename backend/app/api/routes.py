@@ -3,7 +3,7 @@ import time
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from sqlalchemy import select, func, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +16,7 @@ from app.scrapers.registry import source_names
 from app.scrapers.extract import extract_status
 from app.alerts import alert_status, format_alert_message, should_alert
 from app.edital import apply_avaliacao_to_lot, avaliar_lote
+from app.orquestrador import MAX_ANEXOS
 
 router = APIRouter(prefix="/api", tags=["api"])
 
@@ -284,10 +285,10 @@ _avaliar_running = False
 
 
 @router.post("/lots/{lot_id}/avaliar", response_model=LotOut)
-async def avaliar_lot(lot_id: int, db: AsyncSession = Depends(get_db)):
+async def avaliar_lot(lot_id: int, request: Request, db: AsyncSession = Depends(get_db)):
     """
-    Avaliação sob demanda: baixa PDFs públicos da página do lote,
-    extrai avaliação/ocupação/dívida, recalcula o score e grava um parecer.
+    Avaliação sob demanda: PDFs públicos da página + OCR se escaneado
+    + anexos de matrícula/laudo que o usuário baixou logado.
     Um lote por vez. Não substitui o scrape.
     """
     global _avaliar_running
@@ -306,6 +307,18 @@ async def avaliar_lot(lot_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(409, "Lote sem URL pública para buscar o edital.")
     extra = raw_dict(lot)
     extra["source"] = source
+    arquivos: list[tuple[str, bytes]] = []
+    ctype = request.headers.get("content-type") or ""
+    if "multipart/form-data" in ctype:
+        form = await request.form()
+        for item in form.getlist("anexos")[:MAX_ANEXOS]:
+            read = getattr(item, "read", None)
+            if not callable(read):
+                continue
+            data = await read()
+            name = str(getattr(item, "filename", None) or "anexo.pdf")[:80]
+            if data:
+                arquivos.append((name, data))
     _avaliar_running = True
     try:
         filled = await asyncio.to_thread(
@@ -317,6 +330,7 @@ async def avaliar_lot(lot_id: int, db: AsyncSession = Depends(get_db)):
             minimum_bid=lot.minimum_bid,
             reference_value=lot.reference_value,
             extra=extra,
+            anexos=arquivos or None,
         )
     except httpx.HTTPError as exc:
         raise HTTPException(502, f"Não foi possível ler a página ou o PDF: {exc}") from exc

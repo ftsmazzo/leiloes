@@ -3,7 +3,14 @@
 import { Fragment, useState } from 'react';
 import { API_URL, formatMoney, httpUrl } from '../lib/api';
 
-export type LotDoc = { tipo?: string; label?: string; url?: string; scanned?: boolean };
+export type LotDoc = {
+  tipo?: string;
+  label?: string;
+  url?: string;
+  scanned?: boolean;
+  anexo?: boolean;
+  ocr?: boolean;
+};
 
 export type LotPraca = {
   n: number;
@@ -128,15 +135,23 @@ export function LotCard({ lot, onUpdated }: { lot: Lot; onUpdated?: (lot: Lot) =
   const headline = lotHeadline(lot);
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [anexos, setAnexos] = useState<File[]>([]);
 
   const solicitar = async () => {
     setBusy(true);
     setErro(null);
     try {
-      const res = await fetch(`${API_URL}/api/lots/${lot.id}/avaliar`, { method: 'POST' });
+      const opts: RequestInit = { method: 'POST' };
+      if (anexos.length) {
+        const body = new FormData();
+        anexos.slice(0, 3).forEach((file) => body.append('anexos', file));
+        opts.body = body;
+      }
+      const res = await fetch(`${API_URL}/api/lots/${lot.id}/avaliar`, opts);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || 'Falha ao avaliar');
       onUpdated?.(data as Lot);
+      setAnexos([]);
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Falha ao avaliar');
     } finally {
@@ -282,15 +297,37 @@ export function LotCard({ lot, onUpdated }: { lot: Lot; onUpdated?: (lot: Lot) =
                 <li key={doc.url}>
                   <a href={doc.url} target="_blank" rel="noopener noreferrer">
                     {doc.label || doc.tipo || 'PDF'}
+                    {doc.ocr ? ' · OCR' : ''}
                   </a>
                 </li>
-              ) : null,
+              ) : (
+                <li key={doc.label || doc.tipo}>
+                  {doc.label || doc.tipo || 'Anexo'}
+                  {doc.anexo ? ' · anexo' : ''}
+                  {doc.ocr ? ' · OCR' : ''}
+                </li>
+              ),
             )}
           </ul>
         ) : null}
         <div className="lot-card-actions">
+          <label className="lot-anexo">
+            <span className="lot-anexo-label">Anexar matrícula/laudo</span>
+            <input
+              type="file"
+              accept="application/pdf,.pdf"
+              multiple
+              disabled={busy}
+              onChange={(e) => setAnexos(Array.from(e.target.files || []).slice(0, 3))}
+            />
+            {anexos.length ? (
+              <span className="lot-anexo-files">
+                {anexos.map((f) => f.name).join(', ')}
+              </span>
+            ) : null}
+          </label>
           <button type="button" className="btn btn-secondary" onClick={solicitar} disabled={busy} aria-busy={busy}>
-            {busy ? 'Lendo edital…' : lot.avaliado_em ? 'Atualizar avaliação' : 'Solicitar avaliação'}
+            {busy ? 'Lendo documentos…' : lot.avaliado_em ? 'Atualizar avaliação' : 'Solicitar avaliação'}
           </button>
           {site ? (
             <a className="lot-card-link" href={site} target="_blank" rel="noopener noreferrer">
