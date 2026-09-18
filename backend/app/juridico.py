@@ -59,6 +59,12 @@ RE_MEACAO = re.compile(
     r"apenas\s+(?:a\s+)?metade\s+(?:do\s+im[oó]vel|da\s+propriedade)",
     re.I,
 )
+RE_HEDGE = re.compile(
+    r"caso\s+haja|caso\s+exista|caso\s+existente|se\s+houver|havendo|"
+    r"na\s+hip[oó]tese\s+de|acaso\s+exista|em\s+caso\s+de\s+(?:existir|haver)|"
+    r"eventual(?:mente)?",
+    re.I,
+)
 
 
 def _fold(text: str) -> str:
@@ -152,6 +158,14 @@ def _leiloeiro_ok(blob: str, page_text: str, source: str = "") -> Optional[bool]
     return False
 
 
+def _hedged(text: str, match: re.Match[str], window: int = 60) -> bool:
+    """True se antes do trecho encontrado tem linguagem condicional/hipotética
+    ("caso haja", "se houver" etc.) — cláusula genérica de edital, não
+    confirmação de que o risco existe de fato neste imóvel específico."""
+    inicio = text[max(0, match.start() - window):match.start()]
+    return bool(RE_HEDGE.search(inicio))
+
+
 def _trecho_around(text: str, match: re.Match[str], pad: int = 50) -> str:
     start = max(0, match.start() - pad)
     end = min(len(text), match.end() + pad)
@@ -188,13 +202,14 @@ def riscos_from_text(blob: str, page_text: str = "", source: str = "") -> dict[s
         out["citacao"] = "citado"
 
     mix = f"{blob}\n{page_text}"
-    if RE_USUFRUTO.search(blob) and not RE_USUFRUTO_LIVRE.search(blob):
+    u = RE_USUFRUTO.search(blob)
+    if u and not RE_USUFRUTO_LIVRE.search(blob):
         out["usufruto"] = True
-        u = RE_USUFRUTO.search(blob)
-        if u:
-            out["usufruto_trecho"] = _trecho_around(blob, u)
+        out["usufruto_confianca"] = "baixa" if _hedged(blob, u) else "alta"
+        out["usufruto_trecho"] = _trecho_around(blob, u)
     meacao = RE_MEACAO.search(mix)
     if meacao:
         out["meacao"] = True
+        out["meacao_confianca"] = "baixa" if _hedged(mix, meacao) else "alta"
         out["meacao_trecho"] = _trecho_around(mix, meacao)
     return out
