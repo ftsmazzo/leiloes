@@ -15,7 +15,7 @@ export default function RootLayout({
       <body>
         <header className="site-header">
           <p className="brand">Leilões</p>
-          <p>Catálogo de trabalho — Calil, Vegas, Zuk, Mega e Grupo Lance</p>
+          <p>Catálogo de trabalho — Calil, Vegas, Zuk, Mega, Grupo Lance e TRT5</p>
         </header>
         <main className="site-main">{children}</main>
       </body>

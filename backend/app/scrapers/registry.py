@@ -6,6 +6,7 @@ from app.scrapers.vegas import VegasScraper
 from app.scrapers.zuk import ZukScraper
 from app.scrapers.mega import MegaScraper
 from app.scrapers.lance import LanceScraper
+from app.scrapers.trt5 import Trt5Scraper
 
 SOURCES: list[type[BaseScraper]] = [
     CalilScraper,
@@ -13,6 +14,7 @@ SOURCES: list[type[BaseScraper]] = [
     ZukScraper,
     MegaScraper,
     LanceScraper,
+    Trt5Scraper,
 ]
 
 

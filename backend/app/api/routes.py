@@ -173,6 +173,7 @@ async def list_sources():
         "zuk": "Zuk",
         "mega": "Mega",
         "lance": "Grupo Lance",
+        "trt5": "TRT5",
         "demo": "Demo",
     }
     return [{"id": name, "label": labels.get(name, name.title())} for name in source_names()]
@@ -245,7 +246,7 @@ async def _run_scrape_job() -> None:
 async def run_scrape(background_tasks: BackgroundTasks):
     """
     Dispara em segundo plano a execução de todos os scrapers registrados
-    (Calil, Vegas, Zuk, Mega, Grupo Lance) e persiste no banco. Retorna
+    (Calil, Vegas, Zuk, Mega, Grupo Lance, TRT5) e persiste no banco. Retorna
     imediatamente (202) sem esperar o scrape terminar — acompanhe o
     progresso em GET /api/run-scrape/status. Limitado a uma execução por
     vez, com intervalo mínimo entre rodadas, pois cada chamada bate nos
