@@ -304,6 +304,9 @@ def test_avaliar_lote_respeita_valor_atual_da_pagina():
     assert extra["lance_pagina"] == 4207866.06
     assert extra["avaliacao_edital"] == 7013110.1
     assert extra["preco_fonte"] == "pagina"
+    assert extra["pracas"][0]["valor"] == 7013110.1
+    assert extra["pracas"][1]["valor"] == 4207866.06
+    assert extra["pracas"][1]["fim"].startswith("2026-10-20")
     assert extra["score"] > 50
     assert any("40% abaixo" in m for m in extra["score_motivos"])
     assert not any(m.startswith("0% abaixo") for m in extra["score_motivos"])

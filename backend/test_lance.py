@@ -1,9 +1,11 @@
 from datetime import datetime
 from pathlib import Path
+import json
 
 from bs4 import BeautifulSoup
 
 from app.scrapers.lance import _active_praca_price, lots_from_html
+from app.scrapers.listing import pracas_from_html, pracas_from_tag
 from app.scrapers.registry import source_names
 
 ROOT = Path(__file__).resolve().parent
@@ -30,6 +32,14 @@ def test_lance_listing_is_judicial():
     assert lot.raw_data and ("Guarujá" in lot.raw_data or "Guaruja" in lot.raw_data)
     assert lot.category == "apartamento"
     assert "judicial" in (lot.raw_data or "")
+    extra = json.loads(lot.raw_data or "{}")
+    pracas = extra.get("pracas") or []
+    assert [p["n"] for p in pracas] == [1, 2]
+    assert pracas[0]["valor"] == 915043.07
+    assert pracas[0]["inicio"].startswith("2026-09-14")
+    assert pracas[0]["fim"].startswith("2026-09-17")
+    assert pracas[1]["valor"] == 457521.54
+    assert pracas[1]["inicio"].startswith("2026-09-17")
     assert lot.url and "23514" in lot.url
 
 
@@ -51,10 +61,26 @@ def test_active_praca_price_picks_current_phase_by_date():
     price, avaliacao = _active_praca_price(card, now=after)
     assert price == 457521.54
     assert avaliacao == 915043.07
+    pracas = pracas_from_tag(card, now=after)
+    assert pracas[0]["valor"] == 915043.07
+    assert pracas[1]["valor"] == 457521.54
+    assert pracas[1].get("ativa") is True
+
+
+def test_pracas_pagina_item_tem_encerramento_e_valor():
+    html = (ROOT / "fixtures" / "lance_item.html").read_text(encoding="utf-8")
+    pracas = pracas_from_html(html)
+    assert [p["n"] for p in pracas] == [1, 2]
+    assert pracas[0]["valor"] == 7013110.1
+    assert pracas[0]["fim"] == "2026-09-17T16:50:00"
+    assert pracas[1]["valor"] == 4207866.06
+    assert pracas[1]["fim"] == "2026-10-20T16:50:00"
+    assert pracas[1].get("ativa") is True
 
 
 if __name__ == "__main__":
     test_registry_includes_lance()
     test_lance_listing_is_judicial()
     test_active_praca_price_picks_current_phase_by_date()
+    test_pracas_pagina_item_tem_encerramento_e_valor()
     print("ok")

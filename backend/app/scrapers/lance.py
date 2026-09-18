@@ -19,8 +19,8 @@ from .listing import (
     href_of,
     origem_from_text,
     parse_br_currency,
-    parse_br_date,
     photo_bg,
+    pracas_from_tag,
     text_of,
     tipo_from_text,
 )
@@ -29,24 +29,25 @@ RE_ID = re.compile(r"-(\d{4,6})$")
 
 
 def _active_praca_price(card: Tag, now: datetime | None = None) -> tuple[float | None, float | None]:
-    """Lê .card-dates (1ª/2ª/3ª praça, cada uma com início/fim/preço) e
-    retorna (preço da praça ativa agora, preço da 1ª praça como avaliação).
+    """Lê as praças do card e devolve (preço da praça ativa agora, preço da 1ª).
 
     O Grupo Lance mostra o preço da 1ª praça em destaque (.card-price) mesmo
     quando o lote já está na 2ª/3ª praça com lance bem menor — sem isso o
     catálogo mostrava até 2x o valor que dá pra ofertar de verdade.
     """
     now = now or datetime.now()
-    rows = []
-    for row in card.select(".card-date-row"):
-        dates = row.select(".card-instance-date li")
-        if len(dates) < 3:
+    rows: list[tuple[datetime, float]] = []
+    for p in pracas_from_tag(card, now=now):
+        start = None
+        if p.get("inicio"):
+            try:
+                start = datetime.fromisoformat(str(p["inicio"]))
+            except ValueError:
+                start = None
+        valor = p.get("valor")
+        if start is None or not isinstance(valor, (int, float)):
             continue
-        start = parse_br_date(text_of(dates[0]))
-        price = parse_br_currency(text_of(dates[2]))
-        if start is None or price is None:
-            continue
-        rows.append((start, price))
+        rows.append((start, float(valor)))
     if not rows:
         return None, None
     rows.sort(key=lambda r: r[0])
@@ -154,5 +155,6 @@ def _card_to_lot(card: Tag, base_url: str) -> ScrapedLot | None:
             tipo=tipo,
             foto=foto,
             origem=origem,
+            pracas=pracas_from_tag(card) or None,
         ),
     )

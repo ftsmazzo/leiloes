@@ -35,6 +35,7 @@ KEEP_RAW_KEYS = (
     "riscos",
     "processo_cnj",
     "nao_entrar",
+    "pracas",
 )
 
 

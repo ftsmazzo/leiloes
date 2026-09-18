@@ -19,6 +19,7 @@ from .listing import (
     origem_from_text,
     parse_br_currency,
     photo_bg,
+    pracas_from_tag,
     text_of,
     tipo_from_text,
 )
@@ -126,5 +127,6 @@ def _card_to_lot(card: Tag, base_url: str) -> ScrapedLot | None:
             tipo=tipo,
             foto=foto,
             origem=origem,
+            pracas=pracas_from_tag(card) or None,
         ),
     )

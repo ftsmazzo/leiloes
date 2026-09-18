@@ -5,6 +5,13 @@ from app.api.schemas import LotOut
 from app.models.schemas import LotModel
 from app.search import cidade_of, endereco_of, foto_of, raw_dict, tipo_of
 from app.scrapers.extract import format_card, tipo_from_text
+from app.scrapers.listing import merge_pracas
+
+
+def _pracas_out(raw: object) -> list[dict]:
+    if not isinstance(raw, list):
+        return []
+    return merge_pracas([], raw)
 
 
 def lot_to_out(lot: LotModel, source: str) -> LotOut:
@@ -49,6 +56,7 @@ def lot_to_out(lot: LotModel, source: str) -> LotOut:
         processo_cnj=extra.get("processo_cnj") if isinstance(extra.get("processo_cnj"), str) else (raw.get("processo_cnj") if isinstance(raw.get("processo_cnj"), str) else None),
         nao_entrar=True if extra.get("nao_entrar") or raw.get("nao_entrar") else None,
         riscos=extra.get("riscos") if isinstance(extra.get("riscos"), dict) else (raw.get("riscos") if isinstance(raw.get("riscos"), dict) else None),
+        pracas=_pracas_out(extra.get("pracas") or raw.get("pracas")),
         minimum_bid=lot.minimum_bid,
         current_bid=(
             extra.get("lance_pagina")
