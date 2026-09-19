@@ -416,7 +416,7 @@ def parecer_from_facts(facts: dict[str, Any]) -> str:
         origem = "processo" if facts.get("avaliacao_data_origem") == "processo" else "laudo"
         linhas.append(f"Data do {origem}: {data_aval}.")
     if facts.get("scanned"):
-        linhas.append("Há PDF escaneado sem texto extraível; OCR fica para um próximo passo.")
+        linhas.append("Há PDF escaneado sem texto extraível; o OCR não leu estas páginas.")
     riscos = facts.get("riscos") if isinstance(facts.get("riscos"), dict) else {}
     if facts.get("docs_limitados") or riscos.get("docs_limitados"):
         linhas.append(
@@ -556,6 +556,8 @@ def avaliar_lote(
     fetch_file=fetch_pdf,
     fetch_datajud=None,
     write_ai: bool = True,
+    anexos: Optional[list[tuple[str, bytes]]] = None,
+    ocr=None,
 ) -> dict[str, Any]:
     """Fachada: a ordem mora em app.orquestrador (página → PDF → DataJud → score)."""
     from app.orquestrador import avaliar
@@ -572,6 +574,8 @@ def avaliar_lote(
         fetch_file=fetch_file,
         fetch_datajud=fetch_datajud,
         write_ai=write_ai,
+        anexos=anexos,
+        ocr=ocr,
     )
 
 

@@ -224,6 +224,24 @@ a {
   gap: 0.75rem;
 }
 
+.lot-anexo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  min-width: 11rem;
+}
+
+.lot-anexo input[type='file'] {
+  font-size: 0.75rem;
+  max-width: 16rem;
+}
+
+.lot-anexo-files {
+  color: var(--ink);
+}
+
 .lot-card-link {
   padding-top: 0;
   font-size: 0.8125rem;

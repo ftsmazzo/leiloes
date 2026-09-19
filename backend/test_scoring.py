@@ -133,8 +133,9 @@ def test_lance_atual_acima_do_inicial_nao_penaliza():
         fonte_avaliacao="laudo",
         tem_divida=False,
     )
-    assert com_concorrencia["score"] >= so_inicial["score"]
-    assert any("concorrência" in m for m in com_concorrencia["motivos"])
+    # concorrência agora é sinal de qualidade que soma ponto, não só "não penaliza"
+    assert com_concorrencia["score"] > so_inicial["score"]
+    assert any("concorrência" in m and "sinal de qualidade" in m for m in com_concorrencia["motivos"])
     assert any("pelo lance inicial" in m for m in com_concorrencia["motivos"])
     assert any("lance atual" in m and "avaliação" in m for m in com_concorrencia["motivos"])
 
@@ -247,6 +248,34 @@ def test_usufruto_e_meacao_limitam_score():
     assert any("Penhora da meação" in m for m in meacao["motivos"])
 
 
+def test_usufruto_meacao_suspeita_nao_trava_o_teto():
+    """Mencao condicional ('caso haja usufruto') em clausula generica do
+    edital nao pode capar o score igual a uma confirmacao de verdade."""
+    usufruto_suspeita = compute_score(
+        title="Casa",
+        current_bid=100000,
+        reference_value=400000,
+        riscos={"usufruto": True, "usufruto_confianca": "baixa"},
+    )
+    usufruto_confirmado = compute_score(
+        title="Casa",
+        current_bid=100000,
+        reference_value=400000,
+        riscos={"usufruto": True, "usufruto_confianca": "alta"},
+    )
+    meacao_suspeita = compute_score(
+        title="Casa",
+        current_bid=100000,
+        reference_value=400000,
+        riscos={"meacao": True, "meacao_confianca": "baixa"},
+    )
+    assert usufruto_suspeita["score"] > 28
+    assert usufruto_suspeita["score"] > usufruto_confirmado["score"]
+    assert any("possível usufruto" in m for m in usufruto_suspeita["motivos"])
+    assert meacao_suspeita["score"] > 28
+    assert any("possível meação" in m for m in meacao_suspeita["motivos"])
+
+
 def test_citado_nao_aplica_teto():
     result = compute_score(
         title="Apartamento",
@@ -323,6 +352,7 @@ if __name__ == "__main__":
     test_laudo_antigo_acima_nao_e_overpay()
     test_nao_citado_limita_score_ao_fundo()
     test_usufruto_e_meacao_limitam_score()
+    test_usufruto_meacao_suspeita_nao_trava_o_teto()
     test_citado_nao_aplica_teto()
     test_docs_limitados_alerta_sem_teto_de_meacao()
     test_segunda_praca_desconto_pelo_valor_atual()

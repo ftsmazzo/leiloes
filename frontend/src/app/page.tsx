@@ -291,7 +291,7 @@ export default function Home() {
       {!loading && !error && lots.length === 0 && (
         <p className="meta">
           Nenhum lote com esses filtros. Clique em <strong>Atualizar catálogo</strong> para puxar Calil
-          (calilleiloes.com.br), Vegas, Zuk, Mega e Grupo Lance, ou limpe cidade/tipo.
+          (calilleiloes.com.br), Vegas, Zuk, Mega, Grupo Lance e TRT5, ou limpe cidade/tipo.
         </p>
       )}
 

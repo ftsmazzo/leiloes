@@ -220,6 +220,68 @@ def test_avaliar_lote_com_texto_recalcula_score(monkeypatch=None):
         edital_mod.extract_pdf_text = original
 
 
+def test_anexo_de_matricula_tira_analise_limitada():
+    from app import edital as edital_mod
+
+    original = edital_mod.extract_pdf_text
+
+    def fake_extract(data: bytes):
+        if data.startswith(b"%PDF-ANEXO"):
+            return (
+                "Laudo de avaliação pericial R$ 400.000,00. Imóvel desocupado. "
+                "Matrícula 12.345 sem ônus de usufruto.",
+                False,
+            )
+        return "", True
+
+    edital_mod.extract_pdf_text = fake_extract
+    try:
+        extra = avaliar_lote(
+            title="Apartamento",
+            description=None,
+            url="https://example.test/item/1",
+            current_bid=202408.70,
+            minimum_bid=202408.70,
+            reference_value=None,
+            extra={},
+            fetch_page=lambda _u: HTML,
+            fetch_file=lambda _u: b"%PDF-1.4 x",
+            write_ai=False,
+            anexos=[("matricula.pdf", b"%PDF-ANEXO texto")],
+            ocr=lambda _d: "",
+        )
+        assert extra["avaliacao_edital"] == 400000
+        assert extra["ocupacao"] == "desocupado"
+        assert extra.get("docs_limitados") is None
+        assert any(d.get("anexo") and d.get("tipo") == "matricula" for d in extra["docs"])
+        assert extra["score"] > 50
+    finally:
+        edital_mod.extract_pdf_text = original
+
+
+def test_ocr_no_pdf_publico_escaneado():
+    extra = avaliar_lote(
+        title="Apartamento",
+        description=None,
+        url="https://example.test/item/1",
+        current_bid=202408.70,
+        minimum_bid=202408.70,
+        reference_value=None,
+        extra={},
+        fetch_page=lambda _u: HTML,
+        fetch_file=lambda _u: b"%PDF-1.4 x",
+        write_ai=False,
+        ocr=lambda _d: (
+            "Laudo de avaliação pericial R$ 400.000,00. Imóvel desocupado. "
+            "Sem ônus de usufruto na matrícula."
+        ),
+    )
+    assert extra["avaliacao_edital"] == 400000
+    assert extra["ocupacao"] == "desocupado"
+    assert any(d.get("ocr") for d in extra["docs"])
+    assert extra.get("docs_limitados") is None
+
+
 def test_data_laudo_ignora_edital_e_condominio():
     blob = (
         "Edital publicado em 10/09/2026. "
@@ -392,6 +454,8 @@ if __name__ == "__main__":
     test_parecer_aguardando_nao_diz_arrematado()
     test_avaliar_lote_usa_fixture_sem_rede()
     test_avaliar_lote_com_texto_recalcula_score()
+    test_anexo_de_matricula_tira_analise_limitada()
+    test_ocr_no_pdf_publico_escaneado()
     test_data_laudo_ignora_edital_e_condominio()
     test_fields_from_text_le_riscos_do_edital()
     test_fracao_ideal_do_lote_nao_vira_meacao()

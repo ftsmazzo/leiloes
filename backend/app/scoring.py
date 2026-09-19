@@ -29,8 +29,9 @@ PESO_JURIDICO = 0.22
 PESO_RISCO = 0.12
 PESO_DIVIDA = 0.14
 PESO_IDADE = 0.12
-PESO_PRACA = 0.08
-PESO_QUALIDADE = 0.06
+PESO_PRACA = 0.06
+PESO_QUALIDADE = 0.03
+PESO_CONCORRENCIA = 0.05
 
 TETO_NAO_CITADO = 12
 TETO_USUFRUTO = 28
@@ -196,19 +197,23 @@ def _alerta_lance_vs_avaliacao(
     return f"atenção: lance atual {_brl(atual)} está {abs(pct) * 100:.0f}% acima da {rotulo}"
 
 
-def _motivo_concorrencia(
+def _fator_concorrencia(
     current_bid: Optional[float],
     minimum_bid: Optional[float],
-) -> Optional[str]:
+) -> tuple[Optional[float], Optional[str]]:
+    """Lance disputado = outros investidores também acharam bom — sinal de
+    qualidade, soma ponto (não é só "não penaliza")."""
     inicial = minimum_bid if minimum_bid and minimum_bid > 0 else None
     atual = current_bid if current_bid and current_bid > 0 else None
     if not inicial or not atual or atual <= inicial * 1.05:
-        return None
+        return None, None
     pct = (atual - inicial) / inicial * 100
-    return (
+    nota = min(1.0, pct / 50)  # 50%+ acima do inicial satura a nota
+    detalhe = (
         f"lance atual {pct:.0f}% acima do inicial — concorrência por oportunidade, "
-        "não é ponto negativo"
+        "sinal de qualidade do imóvel"
     )
+    return nota, detalhe
 
 
 def _fator_risco(
@@ -407,16 +412,30 @@ def _fator_juridico(riscos: Optional[dict[str, Any]]) -> tuple[Optional[float], 
         notas.append(0.35)
         motivos.append(f"executado citado ({fonte})")
     if riscos.get("usufruto"):
-        notas.append(-0.9)
-        motivos.append("usufruto/uso e fruto na matrícula — risco alto (nua propriedade)")
+        if riscos.get("usufruto_confianca", "alta") == "baixa":
+            notas.append(-0.4)
+            motivos.append(
+                "possível usufruto citado em cláusula condicional do edital "
+                "('caso haja'/'se houver') — confirmar na matrícula antes de descartar"
+            )
+        else:
+            notas.append(-0.9)
+            motivos.append("usufruto/uso e fruto na matrícula — risco alto (nua propriedade)")
     if riscos.get("meacao"):
-        notas.append(-0.85)
         trecho = riscos.get("meacao_trecho")
-        if isinstance(trecho, str) and trecho.strip():
+        if riscos.get("meacao_confianca", "alta") == "baixa":
+            notas.append(-0.35)
+            motivos.append(
+                "possível meação citada em cláusula condicional do edital — "
+                "confirmar se aplica a este imóvel antes de descartar"
+            )
+        elif isinstance(trecho, str) and trecho.strip():
+            notas.append(-0.85)
             motivos.append(
                 f"meação expressa no texto: «{trecho.strip()}» — conferir se o leilão vende 100%"
             )
         else:
+            notas.append(-0.85)
             motivos.append("meação expressa no edital — conferir se o leilão vende 100% do imóvel")
     if riscos.get("leiloeiro_ok") is False:
         notas.append(-0.3)
@@ -481,7 +500,7 @@ def compute_score(
         avaliacao_data=avaliacao_data,
         hoje=hoje,
     )
-    concorrencia = _motivo_concorrencia(current_bid, minimum_bid)
+    nota_concorrencia, concorrencia = _fator_concorrencia(current_bid, minimum_bid)
     limitados = isinstance(riscos, dict) and riscos.get("docs_limitados")
     if limitados:
         nota_risco, detalhe_risco = None, None
@@ -522,6 +541,7 @@ def compute_score(
         (PESO_IDADE, nota_idade),
         (PESO_PRACA, nota_praca),
         (PESO_QUALIDADE, nota_qualidade),
+        (PESO_CONCORRENCIA, nota_concorrencia),
     ]
     presentes = [(peso, nota) for peso, nota in fatores if nota is not None]
     peso_total = sum(peso for peso, _ in presentes) or 1.0
@@ -531,9 +551,9 @@ def compute_score(
     if isinstance(riscos, dict):
         if riscos.get("citacao") in ("nao_citado", "pendente"):
             score = min(score, TETO_NAO_CITADO)
-        if riscos.get("usufruto"):
+        if riscos.get("usufruto") and riscos.get("usufruto_confianca", "alta") != "baixa":
             score = min(score, TETO_USUFRUTO)
-        if riscos.get("meacao"):
+        if riscos.get("meacao") and riscos.get("meacao_confianca", "alta") != "baixa":
             score = min(score, TETO_MEACAO)
 
     motivos = list(motivos_juridico) + [

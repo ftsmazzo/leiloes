@@ -30,6 +30,23 @@ def test_citacao_por_edital():
 def test_usufruto_na_matricula():
     riscos = riscos_from_text("A matrícula registra usufruto vitalício em favor de Maria.")
     assert riscos["usufruto"] is True
+    assert riscos["usufruto_confianca"] == "alta"
+
+
+def test_usufruto_condicional_vira_baixa_confianca():
+    riscos = riscos_from_text(
+        "Caso haja usufruto sobre o imóvel, aplicam-se as disposições do art. 1.391 do CC."
+    )
+    assert riscos["usufruto"] is True
+    assert riscos["usufruto_confianca"] == "baixa"
+
+
+def test_meacao_condicional_vira_baixa_confianca():
+    riscos = riscos_from_text(
+        "Eventualmente havendo meação do executado, será respeitada a fração de 50% do imóvel."
+    )
+    assert riscos["meacao"] is True
+    assert riscos["meacao_confianca"] == "baixa"
 
 
 def test_livre_de_usufruto_nao_marca():
@@ -113,6 +130,8 @@ if __name__ == "__main__":
     test_citado_regularmente_nao_trava()
     test_citacao_por_edital()
     test_usufruto_na_matricula()
+    test_usufruto_condicional_vira_baixa_confianca()
+    test_meacao_condicional_vira_baixa_confianca()
     test_livre_de_usufruto_nao_marca()
     test_meacao_e_conjuge()
     test_conjuge_do_arrematante_nao_e_meacao()
