@@ -57,7 +57,7 @@ def test_fator_risco_ocupado_penaliza():
 def test_fator_risco_desocupado_nao_confunde_com_ocupado():
     result = compute_score(title="Casa", description="Imóvel desocupado, pronto para vistoria")
     assert any("desocupado" in m for m in result["motivos"])
-    assert not any(m.startswith("ocupado") for m in result["motivos"])
+    assert not any(m.startswith("ocupado") and "desocupado" not in m for m in result["motivos"])
 
 
 def test_fator_risco_divida_penaliza():

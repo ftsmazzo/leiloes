@@ -1,4 +1,9 @@
-import { formatMoney, httpUrl } from '../lib/api';
+'use client';
+
+import { useState } from 'react';
+import { API_URL, formatMoney, httpUrl } from '../lib/api';
+
+export type LotDoc = { tipo?: string; label?: string; url?: string; scanned?: boolean };
 
 export type Lot = {
   id: number;
@@ -20,6 +25,13 @@ export type Lot = {
   score: number | null;
   score_tem_comparacao_preco: boolean | null;
   score_motivos: string[];
+  parecer?: string | null;
+  ocupacao?: string | null;
+  avaliado_em?: string | null;
+  docs?: LotDoc[];
+  dividas: Record<string, unknown> | null;
+  avaliacao_edital: number | null;
+  status?: string | null;
   current_bid: number | null;
   minimum_bid: number | null;
   reference_value: number | null;
@@ -53,10 +65,28 @@ export function scoreTier(lot: Lot): ScoreTier {
   return 'neutro';
 }
 
-export function LotCard({ lot }: { lot: Lot }) {
+export function LotCard({ lot, onUpdated }: { lot: Lot; onUpdated?: (lot: Lot) => void }) {
   const site = httpUrl(lot.url);
   const bid = lot.current_bid ?? lot.minimum_bid;
   const headline = lotHeadline(lot);
+  const [busy, setBusy] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const solicitar = async () => {
+    setBusy(true);
+    setErro(null);
+    try {
+      const res = await fetch(`${API_URL}/api/lots/${lot.id}/avaliar`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Falha ao avaliar');
+      onUpdated?.(data as Lot);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : 'Falha ao avaliar');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <article className="lot-card">
       {lot.foto ? (
@@ -66,6 +96,7 @@ export function LotCard({ lot }: { lot: Lot }) {
       <div className="lot-card-body">
         <div className="lot-card-head">
           <span className="source-tag">{lot.source}</span>
+          {lot.status === 'aguardando' ? <span className="status-tag">Ainda não abriu</span> : null}
           {lot.score != null ? (
             <span
               className="score-badge"
@@ -125,12 +156,38 @@ export function LotCard({ lot }: { lot: Lot }) {
               <dd>{lot.area}</dd>
             </>
           ) : null}
+          {lot.ocupacao ? (
+            <>
+              <dt>Ocupação</dt>
+              <dd>{lot.ocupacao}</dd>
+            </>
+          ) : null}
         </dl>
-        {site ? (
-          <a className="lot-card-link" href={site} target="_blank" rel="noopener noreferrer">
-            Abrir no site
-          </a>
+        {lot.parecer ? <p className="lot-parecer">{lot.parecer}</p> : null}
+        {lot.docs?.length ? (
+          <ul className="lot-docs">
+            {lot.docs.slice(0, 5).map((doc) =>
+              doc.url ? (
+                <li key={doc.url}>
+                  <a href={doc.url} target="_blank" rel="noopener noreferrer">
+                    {doc.label || doc.tipo || 'PDF'}
+                  </a>
+                </li>
+              ) : null,
+            )}
+          </ul>
         ) : null}
+        <div className="lot-card-actions">
+          <button type="button" className="btn btn-secondary" onClick={solicitar} disabled={busy} aria-busy={busy}>
+            {busy ? 'Lendo edital…' : lot.avaliado_em ? 'Atualizar avaliação' : 'Solicitar avaliação'}
+          </button>
+          {site ? (
+            <a className="lot-card-link" href={site} target="_blank" rel="noopener noreferrer">
+              Abrir no site
+            </a>
+          ) : null}
+        </div>
+        {erro ? <p className="msg msg-error">{erro}</p> : null}
       </div>
     </article>
   );

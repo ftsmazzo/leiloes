@@ -1,6 +1,8 @@
+import asyncio
 import time
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import select, func, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,10 +11,11 @@ from app.models.database import get_db
 from app.models.schemas import AuctionModel, LotModel
 from app.api.schemas import AuctionOut, AuctionDetailOut, LotOut
 from app.api.present import lot_to_out
-from app.search import cidade_of, filter_lots, score_sort_key, tipo_of
+from app.search import cidade_of, filter_lots, raw_dict, score_sort_key, tipo_of
 from app.scrapers.registry import source_names
 from app.scrapers.extract import extract_status
-from app.alerts import alert_status
+from app.alerts import alert_status, format_alert_message, should_alert
+from app.edital import apply_avaliacao_to_lot, avaliar_lote
 
 router = APIRouter(prefix="/api", tags=["api"])
 
@@ -115,6 +118,7 @@ async def list_lots(
         stmt = stmt.limit(limit).offset(offset)
     result = await db.execute(stmt)
     rows = list(result.all())
+    rows = [row for row in rows if raw_dict(row[0]).get("status") != "encerrado"]
     if text_filter:
         lots_only = [row[0] for row in rows]
         kept_ids = {lot.id for lot in filter_lots(lots_only, cidade=cidade, tipo=tipo, q=q_txt)}
@@ -274,3 +278,68 @@ async def run_scrape(background_tasks: BackgroundTasks):
 @router.get("/run-scrape/status")
 async def run_scrape_status():
     return dict(_scrape_job)
+
+
+_avaliar_running = False
+
+
+@router.post("/lots/{lot_id}/avaliar", response_model=LotOut)
+async def avaliar_lot(lot_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Avaliação sob demanda: baixa PDFs públicos da página do lote,
+    extrai avaliação/ocupação/dívida, recalcula o score e grava um parecer.
+    Um lote por vez. Não substitui o scrape.
+    """
+    global _avaliar_running
+    if _avaliar_running:
+        raise HTTPException(status_code=429, detail="Já existe uma avaliação em andamento. Aguarde terminar.")
+    result = await db.execute(
+        select(LotModel, AuctionModel.source)
+        .join(AuctionModel, LotModel.auction_id == AuctionModel.id)
+        .where(LotModel.id == lot_id)
+    )
+    row = result.one_or_none()
+    if not row:
+        raise HTTPException(404, "Lote não encontrado")
+    lot, source = row
+    if not lot.url:
+        raise HTTPException(409, "Lote sem URL pública para buscar o edital.")
+    extra = raw_dict(lot)
+    _avaliar_running = True
+    try:
+        filled = await asyncio.to_thread(
+            avaliar_lote,
+            title=lot.title,
+            description=lot.description,
+            url=lot.url,
+            current_bid=lot.current_bid,
+            minimum_bid=lot.minimum_bid,
+            reference_value=lot.reference_value,
+            extra=extra,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"Não foi possível ler a página ou o PDF: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(502, f"Falha ao avaliar o lote: {exc}") from exc
+    finally:
+        _avaliar_running = False
+    apply_avaliacao_to_lot(lot, filled)
+    if should_alert(filled):
+        from app.notify import send_telegram_alert, telegram_configured
+
+        if telegram_configured():
+            ok = send_telegram_alert(
+                format_alert_message(
+                    title=lot.title,
+                    source=source,
+                    score=filled.get("score") or 0,
+                    motivos=filled.get("score_motivos") or [],
+                    url=lot.url,
+                )
+            )
+            if ok:
+                filled["alertado"] = True
+                apply_avaliacao_to_lot(lot, filled)
+    await db.commit()
+    await db.refresh(lot)
+    return lot_to_out(lot, source)

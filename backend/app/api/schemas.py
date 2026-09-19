@@ -25,6 +25,13 @@ class LotOut(BaseModel):
     score: Optional[int] = None
     score_tem_comparacao_preco: Optional[bool] = None
     score_motivos: list[str] = []
+    parecer: Optional[str] = None
+    ocupacao: Optional[str] = None
+    avaliado_em: Optional[str] = None
+    docs: list[dict] = []
+    dividas: Optional[dict] = None
+    avaliacao_edital: Optional[float] = None
+    status: Optional[str] = None
     minimum_bid: Optional[float] = None
     current_bid: Optional[float] = None
     reference_value: Optional[float] = None

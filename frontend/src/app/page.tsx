@@ -298,7 +298,11 @@ export default function Home() {
       {!loading && !error && lots.length > 0 && (
         <div className="lot-grid">
           {lots.map((lot) => (
-            <LotCard key={lot.id} lot={lot} />
+            <LotCard
+              key={lot.id}
+              lot={lot}
+              onUpdated={(updated) => setLots((cur) => cur.map((item) => (item.id === updated.id ? updated : item)))}
+            />
           ))}
         </div>
       )}
