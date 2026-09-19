@@ -40,6 +40,13 @@ def test_fields_from_text_read_avaliacao_ocupacao_divida():
     assert fields["dividas"]["iptu"] == 3200
 
 
+def test_fields_iptu_sozinho_nao_e_divida_que_pesa():
+    fields = fields_from_text("IPTU em dívida ativa R$ 8.000,00. Imóvel desocupado.")
+    assert fields["dividas"]["iptu"] == 8000
+    assert fields.get("dividas", {}).get("condominio") is None
+    assert fields["tem_divida"] is False
+
+
 IPTU_CADASTRO = """
 Matrícula: 0045170 - 2º Cartório de Registro de Imóveis
 Inscrição Cadastral: 441-13-77-2
@@ -230,6 +237,7 @@ def test_data_laudo_ignora_edital_e_condominio():
 if __name__ == "__main__":
     test_collect_pdfs_keeps_edital_skips_privacy()
     test_fields_from_text_read_avaliacao_ocupacao_divida()
+    test_fields_iptu_sozinho_nao_e_divida_que_pesa()
     test_fields_from_text_usa_venal_do_imovel_nao_do_terreno()
     test_score_venal_acima_nao_conta_como_overpay()
     test_score_com_edital_sobe_quando_ha_desconto_e_desocupado()

@@ -95,6 +95,64 @@ def test_divida_pequena_nao_derruba_score():
     assert any("impacto baixo" in m for m in pequena["motivos"])
 
 
+def test_iptu_nao_penaliza_condominio_pesa():
+    iptu = compute_score(
+        title="Casa em rua",
+        current_bid=200000,
+        reference_value=400000,
+        fonte_avaliacao="laudo",
+        dividas={"iptu": 80000},
+        tem_divida=False,
+    )
+    condo = compute_score(
+        title="Apartamento",
+        current_bid=200000,
+        reference_value=400000,
+        fonte_avaliacao="laudo",
+        dividas={"condominio": 80000},
+    )
+    assert iptu["score"] > condo["score"]
+    assert any("abatido" in m for m in iptu["motivos"])
+    assert any("não se abate" in m for m in condo["motivos"])
+
+
+def test_lance_atual_acima_do_inicial_nao_penaliza():
+    so_inicial = compute_score(
+        title="Casa em rua",
+        current_bid=100000,
+        minimum_bid=100000,
+        reference_value=400000,
+        fonte_avaliacao="laudo",
+        tem_divida=False,
+    )
+    com_concorrencia = compute_score(
+        title="Casa em rua",
+        current_bid=180000,
+        minimum_bid=100000,
+        reference_value=400000,
+        fonte_avaliacao="laudo",
+        tem_divida=False,
+    )
+    assert com_concorrencia["score"] >= so_inicial["score"]
+    assert any("concorrência" in m for m in com_concorrencia["motivos"])
+    assert any("pelo lance inicial" in m for m in com_concorrencia["motivos"])
+    assert any("lance atual" in m and "avaliação" in m for m in com_concorrencia["motivos"])
+
+
+def test_alerta_quando_lance_atual_supera_avaliacao():
+    result = compute_score(
+        title="Casa em rua",
+        current_bid=420000,
+        minimum_bid=100000,
+        reference_value=400000,
+        fonte_avaliacao="laudo",
+        tem_divida=False,
+    )
+    assert any("acima da avaliação" in m for m in result["motivos"])
+    assert any("concorrência" in m for m in result["motivos"])
+    assert result["score"] > 50
+
+
 def test_venal_nao_penaliza_lance_acima_do_iptu():
     venal = compute_score(
         title="Apartamento",
@@ -143,6 +201,9 @@ if __name__ == "__main__":
     test_fator_risco_divida_penaliza()
     test_fator_praca_avancada_da_bonus()
     test_divida_pequena_nao_derruba_score()
+    test_iptu_nao_penaliza_condominio_pesa()
+    test_lance_atual_acima_do_inicial_nao_penaliza()
+    test_alerta_quando_lance_atual_supera_avaliacao()
     test_venal_nao_penaliza_lance_acima_do_iptu()
     test_laudo_mais_antigo_sobe_score()
     print("ok")

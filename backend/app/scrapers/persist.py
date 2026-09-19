@@ -85,6 +85,7 @@ def _refresh_score_if_avaliado(lot: LotModel) -> None:
         avaliacao_data_origem=extra.get("avaliacao_data_origem")
         if extra.get("avaliacao_data_origem") in ("laudo", "processo")
         else None,
+        tipo=extra.get("tipo") if isinstance(extra.get("tipo"), str) else None,
     )
     extra["score"] = info["score"]
     extra["score_tem_comparacao_preco"] = info["tem_comparacao_preco"]

@@ -34,7 +34,20 @@ SKIP_HREF = re.compile(
 )
 RE_MONEY = re.compile(r"R\$\s*([\d.]+,\d{2})")
 RE_IPTU = re.compile(r"iptu.{0,60}?R\$\s*([\d.]+,\d{2})", re.I)
-RE_CONDO = re.compile(r"condom[ií]nio.{0,60}?R\$\s*([\d.]+,\d{2})", re.I)
+RE_CONDO = re.compile(
+    r"(?:d[eé]bitos?\s+condomin|condom[ií]nio|taxa\s+condomin|despesas?\s+(?:de\s+)?condom)"
+    r".{0,80}?R\$\s*([\d.]+,\d{2})",
+    re.I,
+)
+RE_SEM_CONDO = re.compile(
+    r"sem\s+(?:d[eé]bitos?|d[ií]vidas?).{0,25}condom|condom[ií]nio.{0,25}sem\s+(?:d[eé]bitos?|d[ií]vidas?)",
+    re.I,
+)
+RE_MENCAO_CONDO = re.compile(
+    r"condom[ií]nio.{0,40}(?:atraso|d[eé]bito|inadimpl|dívida)|"
+    r"(?:d[eé]bito|dívida|atraso).{0,30}condom",
+    re.I,
+)
 RE_VENAL_IMOVEL = re.compile(
     r"valor\s+venal\s+do\s+im[oó]vel[:\s]*R\$\s*([\d.]+,\d{2})",
     re.I,
@@ -298,20 +311,26 @@ def fields_from_text(blob: str) -> dict[str, Any]:
     elif ocupado:
         out["ocupacao"] = "ocupado"
     iptu = parse_br_currency(m.group(1)) if (m := RE_IPTU.search(blob)) else None
-    condo = parse_br_currency(m.group(1)) if (m := RE_CONDO.search(blob)) else None
+    condo_vals = [parse_br_currency(m.group(1)) for m in RE_CONDO.finditer(blob)]
+    condo_vals = [v for v in condo_vals if v and v > 0]
+    condo = max(condo_vals) if condo_vals else None
+    sem_condo = bool(RE_SEM_CONDO.search(blob))
     sem_divida = bool(re.search(r"sem\s+(?:d[eé]bitos?|d[ií]vidas?)", blob, re.I))
-    tem_divida = (bool(RE_DIVIDA.search(blob)) or bool(iptu) or bool(condo)) and not sem_divida
-    if tem_divida or iptu or condo:
+    mencao_condo = bool(RE_MENCAO_CONDO.search(blob)) and not sem_condo
+    if sem_condo:
+        condo = None
+        mencao_condo = False
+    if iptu or condo or mencao_condo:
         dividas: dict[str, Any] = {}
         if iptu:
             dividas["iptu"] = iptu
         if condo:
             dividas["condominio"] = condo
-        if tem_divida:
-            dividas["mencao"] = True
+        if mencao_condo:
+            dividas["mencao_condominio"] = True
         out["dividas"] = dividas
-        out["tem_divida"] = True
-    elif desocupado or ocupado:
+        out["tem_divida"] = bool(condo or mencao_condo)
+    elif desocupado or ocupado or sem_divida:
         out["tem_divida"] = False
     return out
 
@@ -419,6 +438,9 @@ def _mistral_parecer(facts: dict[str, Any]) -> str | None:
                             "avaliacao_fonte=venal_imovel é IPTU, não laudo de mercado. "
                             "avaliacao_data antiga é oportunidade: o juiz costuma só corrigir "
                             "monetariamente, abaixo do mercado. 1 ano já é bom; 5+ melhor; 10+ melhor ainda. "
+                            "IPTU em leilão judicial em geral é abatido; condomínio NÃO se abate. "
+                            "Lance atual acima do inicial é concorrência, não ponto negativo. "
+                            "Alerta o lance atual em relação à avaliação. "
                             "Não use adjetivo de venda. Se faltar dado, diga que falta. "
                             "Explique o score com os motivos."
                         ),
@@ -540,6 +562,7 @@ def avaliar_lote(
         avaliacao_data_origem=out.get("avaliacao_data_origem")
         if out.get("avaliacao_data_origem") in ("laudo", "processo")
         else None,
+        tipo=out.get("tipo") if isinstance(out.get("tipo"), str) else None,
     )
     out["score"] = score_info["score"]
     out["score_tem_comparacao_preco"] = score_info["tem_comparacao_preco"]

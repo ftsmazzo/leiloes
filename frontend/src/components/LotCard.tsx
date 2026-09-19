@@ -123,7 +123,7 @@ export function LotCard({ lot, onUpdated }: { lot: Lot; onUpdated?: (lot: Lot) =
         <h2>{headline}</h2>
         {lot.score_motivos.length > 0 ? (
           <ul className="lot-motivos">
-            {lot.score_motivos.slice(0, 2).map((motivo) => (
+            {lot.score_motivos.slice(0, 4).map((motivo) => (
               <li key={motivo}>{motivo}</li>
             ))}
           </ul>
@@ -141,8 +141,18 @@ export function LotCard({ lot, onUpdated }: { lot: Lot; onUpdated?: (lot: Lot) =
               <dd>{lot.bairro}</dd>
             </>
           ) : null}
-          <dt>Lance</dt>
+          <dt>
+            {lot.minimum_bid != null && lot.current_bid != null && lot.current_bid > lot.minimum_bid * 1.05
+              ? 'Lance atual'
+              : 'Lance'}
+          </dt>
           <dd>{formatMoney(bid)}</dd>
+          {lot.minimum_bid != null && lot.current_bid != null && lot.current_bid > lot.minimum_bid * 1.05 ? (
+            <>
+              <dt>Lance inicial</dt>
+              <dd>{formatMoney(lot.minimum_bid)}</dd>
+            </>
+          ) : null}
           {lot.reference_value != null ? (
             <>
               <dt>{lot.avaliacao_fonte === 'venal_imovel' ? 'Valor venal (IPTU)' : 'Avaliação'}</dt>
@@ -179,6 +189,18 @@ export function LotCard({ lot, onUpdated }: { lot: Lot; onUpdated?: (lot: Lot) =
             <>
               <dt>Ocupação</dt>
               <dd>{lot.ocupacao}</dd>
+            </>
+          ) : null}
+          {typeof lot.dividas?.condominio === 'number' ? (
+            <>
+              <dt>Condomínio</dt>
+              <dd>{formatMoney(lot.dividas.condominio as number)} · não se abate</dd>
+            </>
+          ) : null}
+          {typeof lot.dividas?.iptu === 'number' ? (
+            <>
+              <dt>IPTU</dt>
+              <dd>{formatMoney(lot.dividas.iptu as number)} · em geral abatido</dd>
             </>
           ) : null}
         </dl>
