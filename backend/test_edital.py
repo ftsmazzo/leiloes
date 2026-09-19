@@ -5,6 +5,7 @@ from app.edital import (
     avaliar_lote,
     avaliacao_data_from_text,
     collect_pdfs,
+    extract_pdf_text,
     fields_from_text,
     parecer_from_facts,
     precos_from_page,
@@ -15,6 +16,72 @@ from app.scoring import compute_score
 
 ROOT = Path(__file__).resolve().parent
 HTML = (ROOT / "fixtures" / "edital_links.html").read_text(encoding="utf-8")
+
+
+def _pdf_com_texto(texto: str) -> bytes:
+    """PDF mínimo, sem xref válido — suficiente pro pypdfium2 ler, imita edital real malformado."""
+    content = f"BT /F1 12 Tf 10 100 Td ({texto}) Tj ET".encode("latin-1")
+    parts = [
+        b"%PDF-1.4\n",
+        b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n",
+        b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n",
+        b"3 0 obj<</Type/Page/Parent 2 0 R/Resources<</Font<</F1 4 0 R>>>>/MediaBox[0 0 3000 200]/Contents 5 0 R>>endobj\n",
+        b"4 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\n",
+        b"5 0 obj<</Length " + str(len(content)).encode() + b">>\nstream\n" + content + b"\nendstream\nendobj\n",
+        b"trailer<</Size 6/Root 1 0 R>>\n%%EOF",
+    ]
+    return b"".join(parts)
+
+
+def test_extract_pdf_text_usa_pypdfium2_quando_pypdf_falha():
+    from app import edital as edital_mod
+
+    texto = "EDITAL DE ALIENACAO JUDICIAL POR INICIATIVA PARTICULAR - PROCESSO 0001234-11.2020.5.05.0001"
+    data = _pdf_com_texto(texto)
+    original = edital_mod._extract_with_pypdf
+
+    def fake_pypdf(_data: bytes):
+        raise TypeError("unsupported operand type(s) for += : 'int' and 'IndirectObject'")
+
+    edital_mod._extract_with_pypdf = fake_pypdf
+    try:
+        text, scanned = extract_pdf_text(data)
+        assert texto in text
+        assert scanned is False
+    finally:
+        edital_mod._extract_with_pypdf = original
+
+
+def test_extract_pdf_text_carimbo_esaj_sozinho_conta_como_escaneado():
+    """PDF real do e-SAJ/TJSP: só o carimbo de autenticação é texto, o conteúdo é imagem.
+    O carimbo sozinho passa de 80 chars — sem a checagem, o pipeline nunca chamava OCR."""
+    carimbo = (
+        "SOLICITADO POR: JULIO CALIL - CPF/CNPJ: ***.277.508-** DATA: 14/07/2026 14:28:18\n"
+        "Para conferir o original, acesse o site https://esaj.tjsp.jus.br/pastadigital, "
+        "informe o processo 1001610-20.2023.8.26.0506 e codigo ABC123.\n"
+        "Este documento e copia do original, assinado digitalmente por FULANO DE TAL, "
+        "protocolado em 17/07/2026 as 10:47, sob o numero WRPR26703422761.\n"
+        "fls. 201"
+    )
+    data = _pdf_com_texto(carimbo)
+    text, scanned = extract_pdf_text(data)
+    assert scanned is True
+
+
+def test_extract_pdf_text_marca_dagua_ridigital_conta_como_escaneado():
+    """Matrícula real da Mega vem do RI Digital: só a marca d'água do visualizador é texto."""
+    marca = "Visualizacao disponibilizada pelo RI Digital (ridigital.org.br)-Visualizado em:21/07/2026 16:54:50"
+    data = _pdf_com_texto(marca)
+    text, scanned = extract_pdf_text(data)
+    assert scanned is True
+
+
+def test_extract_pdf_text_sem_fallback_quando_pypdf_ja_funciona():
+    texto = "LAUDO PERICIAL DE AVALIACAO JUDICIAL - IMOVEL RESIDENCIAL URBANO MATRICULA 12345"
+    data = _pdf_com_texto(texto)
+    text, scanned = extract_pdf_text(data)
+    assert texto in text
+    assert scanned is False
 
 
 def test_collect_pdfs_keeps_edital_skips_privacy():
@@ -442,6 +509,10 @@ def test_avaliar_lote_consulta_datajud_injetado():
 
 
 if __name__ == "__main__":
+    test_extract_pdf_text_usa_pypdfium2_quando_pypdf_falha()
+    test_extract_pdf_text_carimbo_esaj_sozinho_conta_como_escaneado()
+    test_extract_pdf_text_marca_dagua_ridigital_conta_como_escaneado()
+    test_extract_pdf_text_sem_fallback_quando_pypdf_ja_funciona()
     test_collect_pdfs_keeps_edital_skips_privacy()
     test_fields_from_text_read_avaliacao_ocupacao_divida()
     test_fields_iptu_sozinho_nao_e_divida_que_pesa()

@@ -23,10 +23,10 @@ from app.scrapers.listing import HEADERS, href_of, text_of
 from app.juridico import riscos_from_text
 from app.scoring import RE_DESOCUPADO, RE_OCUPADO
 
-MAX_PDFS = 4
+MAX_PDFS = 8
 MAX_PDF_BYTES = 8_000_000
-MAX_PAGES = 12
-MAX_TEXT = 14_000
+MAX_PAGES = 40
+MAX_TEXT = 100_000
 PDF_TIMEOUT = 30.0
 
 SKIP_HREF = re.compile(
@@ -187,19 +187,68 @@ def precos_from_page(page_text: str = "", html: str = "") -> dict[str, float]:
     return out
 
 
+def _extract_with_pypdf(data: bytes) -> str:
+    reader = PdfReader(BytesIO(data))
+    parts: list[str] = []
+    for page in reader.pages[:MAX_PAGES]:
+        parts.append(page.extract_text() or "")
+    text = re.sub(r"[ \t]+", " ", "\n".join(parts))
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def _extract_with_pypdfium2(data: bytes) -> str:
+    """pypdf quebra em alguns PDFs reais (IndirectObject malformado); pypdfium2 lê o mesmo arquivo."""
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument(data)
+    try:
+        parts: list[str] = []
+        for i in range(min(len(pdf), MAX_PAGES)):
+            page = pdf[i]
+            try:
+                textpage = page.get_textpage()
+                try:
+                    parts.append(textpage.get_text_range() or "")
+                finally:
+                    textpage.close()
+            finally:
+                page.close()
+        text = re.sub(r"[ \t]+", " ", "\n".join(parts))
+        return re.sub(r"\n{3,}", "\n\n", text).strip()
+    finally:
+        pdf.close()
+
+
+RE_CARIMBO_SEM_CONTEUDO = re.compile(
+    r"^(?:solicitado por:.*|para conferir o original,?.*|este documento [eé\?] c[oó\?]pia do original.*|fls\.\s*\d+"
+    r"|visualiza[cç\?][aã\?]o disponibilizada pelo ri digital.*)\s*$",
+    re.I | re.M,
+)
+
+
+def _conteudo_util(text: str) -> str:
+    """Remove carimbos de autenticação/visualização (e-SAJ/TJSP, RI Digital) que sozinhos
+    passam de 80 chars e mascaram um PDF que na prática só tem imagem escaneada por trás."""
+    sem_carimbo = RE_CARIMBO_SEM_CONTEUDO.sub("", text)
+    return re.sub(r"\s+", " ", sem_carimbo).strip()
+
+
 def extract_pdf_text(data: bytes) -> tuple[str, bool]:
     if not data or not data.startswith(b"%PDF") or len(data) < 64:
         return "", True
+    text = ""
     try:
-        reader = PdfReader(BytesIO(data))
-        parts: list[str] = []
-        for page in reader.pages[:MAX_PAGES]:
-            parts.append(page.extract_text() or "")
-        text = re.sub(r"[ \t]+", " ", "\n".join(parts))
-        text = re.sub(r"\n{3,}", "\n\n", text).strip()
+        text = _extract_with_pypdf(data)
     except Exception:
-        return "", True
-    scanned = len(text) < 80
+        text = ""
+    if len(_conteudo_util(text)) < 80:
+        try:
+            fallback = _extract_with_pypdfium2(data)
+        except Exception:
+            fallback = ""
+        if len(_conteudo_util(fallback)) > len(_conteudo_util(text)):
+            text = fallback
+    scanned = len(_conteudo_util(text)) < 80
     return text[:MAX_TEXT], scanned
 
 
