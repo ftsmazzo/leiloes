@@ -66,9 +66,17 @@ RE_LAUDO = re.compile(
     r"valor\s+de\s+mercado)[:\s,]*(?:no\s+valor\s+de\s+)?R\$\s*([\d.]+,\d{2})",
     re.I,
 )
-RE_AREA_TERRENO = re.compile(r"[aá]rea\s+do\s+terreno[:\s]+([\d.]+,\d+)\s*m", re.I)
+RE_AREA_TERRENO = re.compile(
+    r"(?:[aá]rea\s+(?:do\s+)?terreno|metragem\s+(?:do\s+)?terreno)[:\s]+([\d.]+(?:,\d+)?)\s*m",
+    re.I,
+)
 RE_AREA_EDIF = re.compile(
-    r"(?:edifica[cç][aã]o\s+principal|[aá]rea\s+(?:privativa|constru[ií]da|[úu]til))[:\s]+([\d.]+,\d+)\s*m",
+    r"(?:edifica[cç][aã]o\s+principal|[aá]rea\s+(?:privativa|constru[ií]da|[úu]til))[:\s]+([\d.]+(?:,\d+)?)\s*m",
+    re.I,
+)
+RE_MATRICULA_NUM = re.compile(
+    r"matr[ií]cula(?:\s+do\s+im[oó]vel)?[:\s]*(?:n[ºo°.]?\s*)?([\d][\d.]{0,9})\s*"
+    r"(?:d[oe]\s+)?([^\n,.;]{0,60}?(?:CRI|Cart[oó]rio|Of[ií]cio)[^\n,.;]{0,60})?",
     re.I,
 )
 MESES = {
@@ -380,28 +388,36 @@ def _pick_avaliacao(blob: str) -> dict[str, Any]:
 
 def fields_from_text(blob: str, page_text: str = "", source: str = "") -> dict[str, Any]:
     out: dict[str, Any] = {}
+    # Zuk/Lance oferecem pouco PDF público, mas a própria página de detalhe já
+    # traz matrícula, área e ocupação em texto — não deixar essa mina de fora.
+    mix = f"{blob}\n{page_text}" if page_text else blob
     out.update(_pick_avaliacao(blob))
     out.update(avaliacao_data_from_text(blob))
-    area_terreno = _area(RE_AREA_TERRENO, blob)
-    area_edif = _area(RE_AREA_EDIF, blob)
+    area_terreno = _area(RE_AREA_TERRENO, mix)
+    area_edif = _area(RE_AREA_EDIF, mix)
     if area_terreno:
         out["area_terreno"] = area_terreno
     if area_edif:
         out["area_edificacao"] = area_edif
         out["area"] = f"{area_edif:.2f} m²".replace(".", ",")
-    desocupado = bool(RE_DESOCUPADO.search(blob))
-    ocupado = bool(RE_OCUPADO.search(blob)) and not desocupado
+    matricula = RE_MATRICULA_NUM.search(mix)
+    if matricula:
+        out["matricula_numero"] = matricula.group(1).strip(".")
+        if matricula.group(2):
+            out["matricula_cartorio"] = re.sub(r"\s+", " ", matricula.group(2)).strip()
+    desocupado = bool(RE_DESOCUPADO.search(mix))
+    ocupado = bool(RE_OCUPADO.search(mix)) and not desocupado
     if desocupado:
         out["ocupacao"] = "desocupado"
     elif ocupado:
         out["ocupacao"] = "ocupado"
-    iptu = parse_br_currency(m.group(1)) if (m := RE_IPTU.search(blob)) else None
-    condo_vals = [parse_br_currency(m.group(1)) for m in RE_CONDO.finditer(blob)]
+    iptu = parse_br_currency(m.group(1)) if (m := RE_IPTU.search(mix)) else None
+    condo_vals = [parse_br_currency(m.group(1)) for m in RE_CONDO.finditer(mix)]
     condo_vals = [v for v in condo_vals if v and v > 0]
     condo = max(condo_vals) if condo_vals else None
-    sem_condo = bool(RE_SEM_CONDO.search(blob))
-    sem_divida = bool(re.search(r"sem\s+(?:d[eé]bitos?|d[ií]vidas?)", blob, re.I))
-    mencao_condo = bool(RE_MENCAO_CONDO.search(blob)) and not sem_condo
+    sem_condo = bool(RE_SEM_CONDO.search(mix))
+    sem_divida = bool(re.search(r"sem\s+(?:d[eé]bitos?|d[ií]vidas?)", mix, re.I))
+    mencao_condo = bool(RE_MENCAO_CONDO.search(mix)) and not sem_condo
     if sem_condo:
         condo = None
         mencao_condo = False

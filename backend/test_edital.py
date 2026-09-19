@@ -84,6 +84,22 @@ def test_extract_pdf_text_sem_fallback_quando_pypdf_ja_funciona():
     assert scanned is False
 
 
+def test_fields_from_text_le_matricula_area_ocupacao_so_da_pagina():
+    """Zuk/Lance oferecem pouco PDF público, mas a própria página já tem esses dados
+    (evidência real: lote 232155 da Zuk, sem nenhum PDF acessível sem login)."""
+    page_text = (
+        "Metragem terreno 441,00m² Imóvel ocupado Este imóvel encontra-se ocupado "
+        "no momento. Matrícula do imóvel: 6.743 do 1º CRI -  Lorena/SP "
+        "Processo: 0119208-38.2001.8.26.0100"
+    )
+    out = fields_from_text("", page_text, source="zuk")
+    assert out["area_terreno"] == 441.0
+    assert out["ocupacao"] == "ocupado"
+    assert out["matricula_numero"].replace(".", "") == "6743"
+    assert "CRI" in out["matricula_cartorio"]
+    assert out["processo_cnj"] == "0119208-38.2001.8.26.0100"
+
+
 def test_collect_pdfs_keeps_edital_skips_privacy():
     docs = collect_pdfs(HTML, "https://www.calilleiloes.com.br/item/1582/detalhes")
     tipos = [d["tipo"] for d in docs]
@@ -513,6 +529,7 @@ if __name__ == "__main__":
     test_extract_pdf_text_carimbo_esaj_sozinho_conta_como_escaneado()
     test_extract_pdf_text_marca_dagua_ridigital_conta_como_escaneado()
     test_extract_pdf_text_sem_fallback_quando_pypdf_ja_funciona()
+    test_fields_from_text_le_matricula_area_ocupacao_so_da_pagina()
     test_collect_pdfs_keeps_edital_skips_privacy()
     test_fields_from_text_read_avaliacao_ocupacao_divida()
     test_fields_iptu_sozinho_nao_e_divida_que_pesa()
