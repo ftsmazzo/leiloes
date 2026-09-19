@@ -21,6 +21,7 @@ from bs4 import BeautifulSoup
 from app import edital
 from app.datajud import consultar_datajud, merge_riscos
 from app.scrapers.extract import leilao_status, tipo_from_text
+from app.scrapers.listing import merge_pracas, pracas_from_html
 from app.scoring import compute_score
 
 CAMPOS_PDF = (
@@ -125,6 +126,7 @@ def avaliar(
 
     # 1. Página — preços da praça ativa
     page_precos = edital.precos_from_page(page_text, html=html)
+    page_pracas = pracas_from_html(html)
 
     # 2. PDFs públicos — fatos, não preço
     stored_docs, blob, scanned_any = _ler_pdfs(html, url, fetch_file)
@@ -158,6 +160,9 @@ def avaliar(
         out["avaliacao_edital"] = snap["avaliacao_pagina"]
         if not out.get("avaliacao_fonte"):
             out["avaliacao_fonte"] = "laudo"
+    merged_pracas = merge_pracas(out.get("pracas"), page_pracas)
+    if merged_pracas:
+        out["pracas"] = merged_pracas
 
     # 3. DataJud — citação só com evidência
     riscos = dict(extracted.get("riscos") or {})

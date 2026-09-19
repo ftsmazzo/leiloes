@@ -38,6 +38,7 @@ class LotOut(BaseModel):
     processo_cnj: Optional[str] = None
     nao_entrar: Optional[bool] = None
     riscos: Optional[dict] = None
+    pracas: list[dict] = []
     minimum_bid: Optional[float] = None
     current_bid: Optional[float] = None
     reference_value: Optional[float] = None

@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from app.scrapers.mega import lots_from_html
 from app.scrapers.registry import source_names
@@ -20,6 +21,14 @@ def test_mega_skips_auction_cards():
     assert formiga.current_bid == 2300000
     assert formiga.raw_data and "Formiga" in formiga.raw_data
     assert "extrajudicial" in (formiga.raw_data or "")
+    predio = next(lot for lot in lots if lot.external_id == "X129117")
+    extra = json.loads(predio.raw_data or "{}")
+    pracas = extra.get("pracas") or []
+    assert [p["n"] for p in pracas] == [1, 2]
+    assert pracas[0]["valor"] == 2890000
+    assert pracas[0]["fim"].startswith("2026-09-21")
+    assert pracas[1]["valor"] == 1445000
+    assert pracas[1]["fim"].startswith("2026-09-28")
 
 
 if __name__ == "__main__":

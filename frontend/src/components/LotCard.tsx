@@ -1,9 +1,17 @@
 'use client';
 
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { API_URL, formatMoney, httpUrl } from '../lib/api';
 
 export type LotDoc = { tipo?: string; label?: string; url?: string; scanned?: boolean };
+
+export type LotPraca = {
+  n: number;
+  inicio?: string;
+  fim?: string;
+  valor?: number;
+  ativa?: boolean;
+};
 
 export type Lot = {
   id: number;
@@ -46,6 +54,7 @@ export type Lot = {
     nao_entrar?: boolean;
     processo_cnj?: string;
   } | null;
+  pracas?: LotPraca[];
   current_bid: number | null;
   minimum_bid: number | null;
   reference_value: number | null;
@@ -67,6 +76,26 @@ export function lotHeadline(lot: Lot): string {
   if (lot.headline) return lot.headline;
   const tipo = lot.tipo ? TIPO_LABELS[lot.tipo] || lot.tipo : null;
   return [tipo, lot.bairro, lot.cidade].filter(Boolean).join(' · ') || 'Lote';
+}
+
+function formatPracaStamp(iso?: string): string | null {
+  if (!iso || iso.length < 16) return null;
+  const [date, time] = iso.split('T');
+  const [year, month, day] = date.split('-');
+  if (!year || !month || !day) return null;
+  const hhmm = (time || '').slice(0, 5);
+  if (!hhmm || hhmm === '00:00') return `${day}/${month}/${year}`;
+  return `${day}/${month}/${year} ${hhmm}`;
+}
+
+function formatPracaLine(praca: LotPraca): string {
+  const start = formatPracaStamp(praca.inicio);
+  const end = formatPracaStamp(praca.fim);
+  let when = '';
+  if (start && end && start !== end) when = `${start} – ${end}`;
+  else when = start || end || '';
+  const money = praca.valor != null ? formatMoney(praca.valor) : '';
+  return [when, money].filter(Boolean).join(' · ');
 }
 
 function formatLaudoDate(iso: string): string {
@@ -186,6 +215,20 @@ export function LotCard({ lot, onUpdated }: { lot: Lot; onUpdated?: (lot: Lot) =
               <dd>{formatMoney(lot.reference_value)}</dd>
             </>
           ) : null}
+          {(lot.pracas || []).map((praca) => {
+            const line = formatPracaLine(praca);
+            if (!line) return null;
+            const label = (lot.pracas || []).length === 1 ? 'Praça' : `${praca.n}ª praça`;
+            return (
+              <Fragment key={praca.n}>
+                <dt>{label}</dt>
+                <dd>
+                  {line}
+                  {praca.ativa ? ' · agora' : ''}
+                </dd>
+              </Fragment>
+            );
+          })}
           {lot.avaliacao_data ? (
             <>
               <dt>{lot.avaliacao_data_origem === 'processo' ? 'Processo desde' : 'Data do laudo'}</dt>
