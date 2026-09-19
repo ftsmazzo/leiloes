@@ -35,6 +35,9 @@ class LotOut(BaseModel):
     avaliacao_data: Optional[str] = None
     avaliacao_data_origem: Optional[str] = None
     status: Optional[str] = None
+    processo_cnj: Optional[str] = None
+    nao_entrar: Optional[bool] = None
+    riscos: Optional[dict] = None
     minimum_bid: Optional[float] = None
     current_bid: Optional[float] = None
     reference_value: Optional[float] = None

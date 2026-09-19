@@ -1,11 +1,13 @@
 from pathlib import Path
 
+from app.orquestrador import snapshot_preco
 from app.edital import (
     avaliar_lote,
     avaliacao_data_from_text,
     collect_pdfs,
     fields_from_text,
     parecer_from_facts,
+    precos_from_page,
 )
 from app.scrapers.extract import leilao_status
 from app.scrapers.soleon import lots_from_imovel_list
@@ -234,6 +236,146 @@ def test_data_laudo_ignora_edital_e_condominio():
     assert so_data["avaliacao_data_origem"] == "processo"
 
 
+def test_fields_from_text_le_riscos_do_edital():
+    blob = (
+        "Processo n. 0001234-11.2012.8.26.0100. O executado não foi citado. "
+        "Matrícula com usufruto. Penhora da meação. Laudo R$ 400.000,00."
+    )
+    fields = fields_from_text(blob)
+    assert fields["processo_cnj"] == "0001234-11.2012.8.26.0100"
+    assert fields["riscos"]["citacao"] == "nao_citado"
+    assert fields["riscos"]["usufruto"] is True
+    assert fields["riscos"]["meacao"] is True
+
+
+def test_fracao_ideal_do_lote_nao_vira_meacao():
+    blob = (
+        "DIREITOS DA ALIENAÇÃO FIDUCIARIA da unidade autônoma Apartamento nº 34, "
+        "área total de 48,383m², fração ideal de 0,357143% do terreno. "
+        "O cônjuge do executado será intimado. Bem de família."
+    )
+    fields = fields_from_text(blob)
+    assert "meacao" not in (fields.get("riscos") or {})
+
+
+def test_precos_from_page_separa_lance_e_avaliacao():
+    precos = precos_from_page(
+        "Valor atual R$ 25.978,19 Incremento R$ 1.000,00 Valor de avaliação R$ 51.956,37"
+    )
+    assert precos["lance_pagina"] == 25978.19
+    assert precos["avaliacao_pagina"] == 51956.37
+
+
+def test_precos_from_html_grupo_lance_nao_usa_1a_praca():
+    html = (ROOT / "fixtures" / "lance_item.html").read_text(encoding="utf-8")
+    precos = precos_from_page(html=html)
+    assert precos["lance_pagina"] == 4207866.06
+    assert precos["avaliacao_pagina"] == 7013110.1
+
+
+def test_snapshot_pagina_ganha_do_scrape_da_1a_praca():
+    snap = snapshot_preco(
+        {"lance_pagina": 4207866.06, "avaliacao_pagina": 7013110.1},
+        {"avaliacao_edital": 7013110.1},
+        current_bid=7013110.1,
+        minimum_bid=7013110.1,
+        reference_value=7013110.1,
+    )
+    assert snap["lance"] == 4207866.06
+    assert snap["inicial"] == 4207866.06
+    assert snap["avaliacao"] == 7013110.1
+    assert snap["fonte"] == "pagina"
+
+
+def test_avaliar_lote_respeita_valor_atual_da_pagina():
+    html = (ROOT / "fixtures" / "lance_item.html").read_text(encoding="utf-8")
+    extra = avaliar_lote(
+        title="Terreno Porto Ferreira",
+        description=None,
+        url="https://www.grupolance.com.br/imoveis/terrenos/sp/porto-ferreira/x-28639",
+        current_bid=7013110.10,
+        minimum_bid=7013110.10,
+        reference_value=7013110.10,
+        extra={},
+        fetch_page=lambda _u: html,
+        fetch_file=lambda _u: b"%PDF-1.4 x",
+        write_ai=False,
+    )
+    assert extra["lance_pagina"] == 4207866.06
+    assert extra["avaliacao_edital"] == 7013110.1
+    assert extra["preco_fonte"] == "pagina"
+    assert extra["score"] > 50
+    assert any("40% abaixo" in m for m in extra["score_motivos"])
+    assert not any(m.startswith("0% abaixo") for m in extra["score_motivos"])
+    assert not any(m.startswith("desocupado") for m in extra["score_motivos"])
+    assert not any("sem débitos de condomínio" in m for m in extra["score_motivos"])
+
+
+def test_parecer_diz_quando_faltou_documento_e_datajud():
+    text = parecer_from_facts(
+        {
+            "score": 55,
+            "docs_limitados": True,
+            "riscos": {"datajud": "nao_encontrado"},
+            "motivos": ["matrícula/laudo sem texto extraível — análise limitada"],
+        }
+    )
+    assert "matrícula" in text.lower() or "limitada" in text.lower()
+    assert "DataJud" in text
+    assert "não entre" not in text.lower()
+
+
+def test_avaliar_lote_consulta_datajud_injetado():
+    from app import edital as edital_mod
+
+    original = edital_mod.extract_pdf_text
+
+    def fake_extract(_data: bytes):
+        return (
+            "Processo n. 0001234-11.2012.8.26.0100. O executado não foi citado. "
+            "Laudo de avaliação pericial R$ 400.000,00. Imóvel desocupado.",
+            False,
+        )
+
+    def fake_datajud(_url, _payload):
+        return {
+            "hits": {
+                "hits": [
+                    {
+                        "_source": {
+                            "tribunal": "TJSP",
+                            "classe": {"nome": "Execução"},
+                            "movimentos": [{"nome": "Citação cumprida"}],
+                        }
+                    }
+                ]
+            }
+        }
+
+    edital_mod.extract_pdf_text = fake_extract
+    try:
+        extra = avaliar_lote(
+            title="Apartamento",
+            description=None,
+            url="https://example.test/item/1",
+            current_bid=202408.70,
+            minimum_bid=202408.70,
+            reference_value=None,
+            extra={},
+            fetch_page=lambda _u: HTML,
+            fetch_file=lambda _u: b"%PDF-1.4 x",
+            fetch_datajud=fake_datajud,
+            write_ai=False,
+        )
+        assert extra["processo_cnj"] == "0001234-11.2012.8.26.0100"
+        assert extra["riscos"]["citacao"] == "citado"
+        assert extra["riscos"]["citacao_fonte"] == "datajud"
+        assert extra.get("nao_entrar") is None
+        assert extra["score"] > 12
+    finally:
+        edital_mod.extract_pdf_text = original
+
+
 if __name__ == "__main__":
     test_collect_pdfs_keeps_edital_skips_privacy()
     test_fields_from_text_read_avaliacao_ocupacao_divida()
@@ -248,4 +390,12 @@ if __name__ == "__main__":
     test_avaliar_lote_usa_fixture_sem_rede()
     test_avaliar_lote_com_texto_recalcula_score()
     test_data_laudo_ignora_edital_e_condominio()
+    test_fields_from_text_le_riscos_do_edital()
+    test_fracao_ideal_do_lote_nao_vira_meacao()
+    test_precos_from_page_separa_lance_e_avaliacao()
+    test_precos_from_html_grupo_lance_nao_usa_1a_praca()
+    test_snapshot_pagina_ganha_do_scrape_da_1a_praca()
+    test_avaliar_lote_respeita_valor_atual_da_pagina()
+    test_parecer_diz_quando_faltou_documento_e_datajud()
+    test_avaliar_lote_consulta_datajud_injetado()
     print("ok")

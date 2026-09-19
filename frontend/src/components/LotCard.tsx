@@ -35,6 +35,17 @@ export type Lot = {
   avaliacao_data?: string | null;
   avaliacao_data_origem?: string | null;
   status?: string | null;
+  processo_cnj?: string | null;
+  nao_entrar?: boolean | null;
+  riscos?: {
+    citacao?: string;
+    citacao_fonte?: string;
+    usufruto?: boolean;
+    meacao?: boolean;
+    meacao_trecho?: string;
+    nao_entrar?: boolean;
+    processo_cnj?: string;
+  } | null;
   current_bid: number | null;
   minimum_bid: number | null;
   reference_value: number | null;
@@ -65,12 +76,16 @@ function formatLaudoDate(iso: string): string {
   const years = Math.max(0, Math.round((Date.now() - stamp) / (365.25 * 24 * 3600 * 1000)));
   const month = String(when.getMonth() + 1).padStart(2, '0');
   const label = years === 1 ? '1 ano' : `${years} anos`;
-  return `${month}/${when.getFullYear()} · ${label}`;
+  const opp = years >= 1 ? ' · oportunidade' : '';
+  return `${month}/${when.getFullYear()} · ${label}${opp}`;
 }
 
 export type ScoreTier = 'alto' | 'baixo' | 'neutro' | 'sem-preco';
 
 export function scoreTier(lot: Lot): ScoreTier {
+  if (lot.nao_entrar || lot.riscos?.citacao === 'nao_citado' || lot.riscos?.citacao === 'pendente') {
+    return 'baixo';
+  }
   if (lot.score == null) return 'neutro';
   if (!lot.score_tem_comparacao_preco) return 'sem-preco';
   if (lot.score >= 65) return 'alto';
@@ -110,6 +125,11 @@ export function LotCard({ lot, onUpdated }: { lot: Lot; onUpdated?: (lot: Lot) =
         <div className="lot-card-head">
           <span className="source-tag">{lot.source}</span>
           {lot.status === 'aguardando' ? <span className="status-tag">Ainda não abriu</span> : null}
+          {lot.nao_entrar || lot.riscos?.citacao === 'nao_citado' || lot.riscos?.citacao === 'pendente' ? (
+            <span className="risk-tag">Não citado — não entrar</span>
+          ) : null}
+          {lot.riscos?.usufruto ? <span className="risk-tag">Usufruto</span> : null}
+          {lot.riscos?.meacao ? <span className="risk-tag">Meação/fração</span> : null}
           {lot.score != null ? (
             <span
               className="score-badge"
@@ -123,12 +143,19 @@ export function LotCard({ lot, onUpdated }: { lot: Lot; onUpdated?: (lot: Lot) =
         <h2>{headline}</h2>
         {lot.score_motivos.length > 0 ? (
           <ul className="lot-motivos">
-            {lot.score_motivos.slice(0, 4).map((motivo) => (
+            {lot.score_motivos.slice(0, 5).map((motivo) => (
               <li key={motivo}>{motivo}</li>
             ))}
           </ul>
         ) : null}
+        {lot.riscos?.meacao_trecho ? <p className="lot-trecho">Trecho: «{lot.riscos.meacao_trecho}»</p> : null}
         <dl className="lot-dl">
+          {lot.processo_cnj ? (
+            <>
+              <dt>Processo</dt>
+              <dd>{lot.processo_cnj}</dd>
+            </>
+          ) : null}
           {lot.endereco ? (
             <>
               <dt>Endereço</dt>

@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from io import BytesIO
 from typing import Any, Optional
 from urllib.parse import urljoin
@@ -20,7 +20,8 @@ from pypdf import PdfReader
 
 from app.scrapers.extract import extra_json, leilao_status, parse_br_currency
 from app.scrapers.listing import HEADERS, href_of, text_of
-from app.scoring import RE_DESOCUPADO, RE_DIVIDA, RE_OCUPADO, compute_score
+from app.juridico import riscos_from_text
+from app.scoring import RE_DESOCUPADO, RE_OCUPADO
 
 MAX_PDFS = 4
 MAX_PDF_BYTES = 8_000_000
@@ -101,6 +102,11 @@ RE_CTX_LIXO = re.compile(
     r"d[ií]vida\s+ativa|refer[eê]ncia|atualiza[cç][aã]o\s+monet|at[eé]\s+\d",
     re.I,
 )
+RE_VALOR_ATUAL = re.compile(r"valor\s+atual[:\s]*R\$\s*([\d.]+,\d{2})", re.I)
+RE_VALOR_AVAL_PAGINA = re.compile(
+    r"valor\s+de\s+avalia[cç][aã]o[:\s]*R\$\s*([\d.]+,\d{2})",
+    re.I,
+)
 
 DOC_TIPOS: list[tuple[str, re.Pattern[str]]] = [
     ("laudo", re.compile(r"laudo|avalia", re.I)),
@@ -149,6 +155,36 @@ def collect_pdfs(html: str, base_url: str) -> list[dict[str, str]]:
     rank = {"laudo": 0, "edital": 1, "debito": 2, "iptu": 3, "matricula": 4, "penhora": 5, "documento": 6}
     out.sort(key=lambda d: rank.get(d["tipo"], 9))
     return out[:MAX_PDFS]
+
+
+def precos_from_page(page_text: str = "", html: str = "") -> dict[str, float]:
+    """Lance e avaliação da página pública. A página manda; o PDF curto não apaga isso."""
+    html = (html or "").replace("\xa0", " ").replace("&nbsp;", " ")
+    text = (page_text or "").replace("\xa0", " ")
+    if html and not text:
+        text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
+    out: dict[str, float] = {}
+    if html:
+        soup = BeautifulSoup(html, "html.parser")
+        for block in soup.select(".product-detail"):
+            blob = re.sub(r"\s+", " ", block.get_text(" ", strip=True))
+            money = parse_br_currency(m.group(1)) if (m := re.search(r"R\$\s*([\d.]+,\d{2})", blob)) else None
+            if not money or money <= 0:
+                continue
+            low = blob.lower()
+            if low.startswith("valor atual"):
+                out["lance_pagina"] = money
+            elif low.startswith("valor de avalia"):
+                out["avaliacao_pagina"] = money
+    if "lance_pagina" not in out:
+        atual = parse_br_currency(m.group(1)) if (m := RE_VALOR_ATUAL.search(text)) else None
+        if atual and atual > 0:
+            out["lance_pagina"] = atual
+    if "avaliacao_pagina" not in out:
+        aval = parse_br_currency(m.group(1)) if (m := RE_VALOR_AVAL_PAGINA.search(text)) else None
+        if aval and aval > 0:
+            out["avaliacao_pagina"] = aval
+    return out
 
 
 def extract_pdf_text(data: bytes) -> tuple[str, bool]:
@@ -293,7 +329,7 @@ def _pick_avaliacao(blob: str) -> dict[str, Any]:
     return out
 
 
-def fields_from_text(blob: str) -> dict[str, Any]:
+def fields_from_text(blob: str, page_text: str = "", source: str = "") -> dict[str, Any]:
     out: dict[str, Any] = {}
     out.update(_pick_avaliacao(blob))
     out.update(avaliacao_data_from_text(blob))
@@ -332,6 +368,11 @@ def fields_from_text(blob: str) -> dict[str, Any]:
         out["tem_divida"] = bool(condo or mencao_condo)
     elif desocupado or ocupado or sem_divida:
         out["tem_divida"] = False
+    riscos = riscos_from_text(blob, page_text, source=source)
+    if riscos:
+        out["riscos"] = riscos
+        if riscos.get("processo_cnj"):
+            out["processo_cnj"] = riscos["processo_cnj"]
     return out
 
 
@@ -376,6 +417,14 @@ def parecer_from_facts(facts: dict[str, Any]) -> str:
         linhas.append(f"Data do {origem}: {data_aval}.")
     if facts.get("scanned"):
         linhas.append("Há PDF escaneado sem texto extraível; OCR fica para um próximo passo.")
+    riscos = facts.get("riscos") if isinstance(facts.get("riscos"), dict) else {}
+    if facts.get("docs_limitados") or riscos.get("docs_limitados"):
+        linhas.append(
+            "Matrícula e laudo sem texto extraível; a leitura ficou no edital/página. "
+            "Não dá para afirmar meação, citação nem ocupação."
+        )
+    if riscos.get("datajud") in ("nao_encontrado", "indisponivel"):
+        linhas.append("DataJud não trouxe movimentos deste processo; citação não confirmada.")
     if not linhas:
         return "Não foi possível montar o parecer com os indícios disponíveis."
     return " ".join(linhas)
@@ -409,6 +458,10 @@ def _mistral_parecer(facts: dict[str, Any]) -> str | None:
         "scanned": bool(facts.get("scanned")),
         "cidade": facts.get("cidade"),
         "headline": facts.get("headline"),
+        "processo_cnj": facts.get("processo_cnj"),
+        "riscos": facts.get("riscos"),
+        "docs_limitados": bool(facts.get("docs_limitados")),
+        "nao_entrar": bool((facts.get("riscos") or {}).get("nao_entrar") or facts.get("nao_entrar")),
     }
     try:
         r = httpx.post(
@@ -438,9 +491,22 @@ def _mistral_parecer(facts: dict[str, Any]) -> str | None:
                             "avaliacao_fonte=venal_imovel é IPTU, não laudo de mercado. "
                             "avaliacao_data antiga é oportunidade: o juiz costuma só corrigir "
                             "monetariamente, abaixo do mercado. 1 ano já é bom; 5+ melhor; 10+ melhor ainda. "
+                            "Lance acima de laudo antigo NÃO é overpay e NÃO é ponto negativo. "
                             "IPTU em leilão judicial em geral é abatido; condomínio NÃO se abate. "
                             "Lance atual acima do inicial é concorrência, não ponto negativo. "
-                            "Alerta o lance atual em relação à avaliação. "
+                            "Alerta o lance atual em relação à avaliação recente; laudo antigo continua oportunidade. "
+                            "Leiloeiro da mesma casa (Calil, Zuk, Vegas, Mega, Lance) no site e no edital "
+                            "é o mesmo — não diga divergência. "
+                            "citacao nao_citado ou pendente: diga para não entrar. "
+                            "Usufruto só se riscos.usufruto. Meação só se riscos.meacao for true — "
+                            "fração ideal de condomínio e regra genérica de cônjuge NÃO são meação. "
+                            "Não diga 'não entre' salvo se nao_entrar for true. "
+                            "Não invente praça, desconto judicial, ocupação nem débito. "
+                            "avaliacao_data_origem=processo é a data do processo, NÃO do laudo. "
+                            "Se datajud for nao_encontrado ou indisponivel, diga que o DataJud "
+                            "não trouxe movimentos. Se docs_limitados, diga que faltou texto de "
+                            "matrícula/laudo e não afirme o que não leu. "
+                            "DataJud só traz movimentos, não peças do processo. "
                             "Não use adjetivo de venda. Se faltar dado, diga que falta. "
                             "Explique o score com os motivos."
                         ),
@@ -488,117 +554,37 @@ def avaliar_lote(
     extra: dict[str, Any],
     fetch_page=fetch_html,
     fetch_file=fetch_pdf,
+    fetch_datajud=None,
     write_ai: bool = True,
 ) -> dict[str, Any]:
-    """Lê a página do lote, PDFs públicos, devolve extra enriquecido. Não inventa."""
-    html = fetch_page(url)
-    page_text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
-    status = leilao_status(title, description, page_text[:4000])
-    docs = collect_pdfs(html, url)
-    texts: list[str] = []
-    scanned_any = False
-    stored_docs: list[dict[str, Any]] = []
-    for doc in docs:
-        item = dict(doc)
-        try:
-            data = fetch_file(doc["url"])
-            text, scanned = extract_pdf_text(data)
-        except Exception:
-            text, scanned = "", True
-        if scanned:
-            scanned_any = True
-            item["scanned"] = True
-        item["chars"] = len(text)
-        stored_docs.append(item)
-        if text:
-            texts.append(f"[{doc['tipo']}] {text}")
+    """Fachada: a ordem mora em app.orquestrador (página → PDF → DataJud → score)."""
+    from app.orquestrador import avaliar
 
-    blob = "\n".join(texts)
-    extracted = fields_from_text(blob)
-    out = dict(extra)
-    out["docs"] = stored_docs
-    out["avaliado_em"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    out["status"] = status
-    for key in (
-        "avaliacao_edital",
-        "avaliacao_fonte",
-        "valor_venal_imovel",
-        "valor_venal_terreno",
-        "valor_venal_edificacao",
-        "area_edificacao",
-        "area_terreno",
-        "area",
-        "avaliacao_data",
-        "avaliacao_data_origem",
-    ):
-        if extracted.get(key) not in (None, "", [], {}):
-            out[key] = extracted[key]
-    if extracted.get("ocupacao"):
-        out["ocupacao"] = extracted["ocupacao"]
-    if extracted.get("dividas"):
-        out["dividas"] = extracted["dividas"]
-    if stored_docs and not blob.strip():
-        out["edital_sem_texto"] = True
-
-    ref = out.get("avaliacao_edital") or reference_value
-    tem_divida = extracted.get("tem_divida")
-    ocupacao = out.get("ocupacao") if isinstance(out.get("ocupacao"), str) else None
-    fonte = out.get("avaliacao_fonte") if out.get("avaliacao_fonte") in ("laudo", "venal_imovel") else None
-    desc = " ".join(p for p in (description, blob[:3000]) if p)
-    score_info = compute_score(
+    return avaliar(
         title=title,
-        description=desc,
+        description=description,
+        url=url,
         current_bid=current_bid,
         minimum_bid=minimum_bid,
-        reference_value=ref if isinstance(ref, (int, float)) else None,
-        valor_mercado_estimado=out.get("valor_mercado_estimado")
-        if isinstance(out.get("valor_mercado_estimado"), (int, float))
-        else None,
-        ocupacao=ocupacao,
-        tem_divida=tem_divida if isinstance(tem_divida, bool) else None,
-        fonte_avaliacao=fonte,
-        dividas=out.get("dividas") if isinstance(out.get("dividas"), dict) else None,
-        avaliacao_data=out.get("avaliacao_data"),
-        avaliacao_data_origem=out.get("avaliacao_data_origem")
-        if out.get("avaliacao_data_origem") in ("laudo", "processo")
-        else None,
-        tipo=out.get("tipo") if isinstance(out.get("tipo"), str) else None,
+        reference_value=reference_value,
+        extra=extra,
+        fetch_page=fetch_page,
+        fetch_file=fetch_file,
+        fetch_datajud=fetch_datajud,
+        write_ai=write_ai,
     )
-    out["score"] = score_info["score"]
-    out["score_tem_comparacao_preco"] = score_info["tem_comparacao_preco"]
-    out["score_motivos"] = score_info["motivos"]
-
-    facts = {
-        "score": out["score"],
-        "tem_comparacao_preco": out["score_tem_comparacao_preco"],
-        "motivos": out["score_motivos"],
-        "avaliacao_edital": out.get("avaliacao_edital"),
-        "avaliacao_fonte": out.get("avaliacao_fonte"),
-        "valor_venal_terreno": out.get("valor_venal_terreno"),
-        "valor_venal_imovel": out.get("valor_venal_imovel"),
-        "area_edificacao": out.get("area_edificacao"),
-        "area_terreno": out.get("area_terreno"),
-        "avaliacao_data": out.get("avaliacao_data"),
-        "avaliacao_data_origem": out.get("avaliacao_data_origem"),
-        "lance_atual": current_bid if current_bid is not None else minimum_bid,
-        "status": status,
-        "ocupacao": ocupacao,
-        "dividas": out.get("dividas"),
-        "docs": stored_docs,
-        "scanned": scanned_any,
-        "cidade": out.get("cidade"),
-        "headline": out.get("headline"),
-    }
-    parecer = _mistral_parecer(facts) if write_ai else None
-    if parecer and status != "encerrado" and re.search(r"\barrematad", parecer, re.I):
-        parecer = None
-    out["parecer"] = parecer or parecer_from_facts(facts)
-    return {k: v for k, v in out.items() if v not in (None, "", [], {})}
 
 
 def apply_avaliacao_to_lot(lot, extra: dict[str, Any]) -> None:
     aval = extra.get("avaliacao_edital")
     if isinstance(aval, (int, float)) and aval > 0:
         lot.reference_value = float(aval)
+    lance = extra.get("lance_pagina")
+    if isinstance(lance, (int, float)) and lance > 0:
+        lot.current_bid = float(lance)
+        lot.minimum_bid = float(lance)
+    aval_pagina = extra.get("avaliacao_pagina")
+    if isinstance(aval_pagina, (int, float)) and aval_pagina > 0:
+        lot.reference_value = float(aval_pagina)
     lot.raw_data = extra_json(extra)
     lot.updated_at = datetime.utcnow()

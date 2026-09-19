@@ -46,7 +46,7 @@ def test_score_prioriza_mercado_sobre_avaliacao_do_edital():
 def test_score_fallback_para_avaliacao_do_edital_sem_mercado():
     result = compute_score(title="Apartamento", current_bid=100000, reference_value=150000)
     assert result["tem_comparacao_preco"] is True
-    assert any("avaliação do edital" in m for m in result["motivos"])
+    assert any("abaixo da avaliação" in m for m in result["motivos"])
 
 
 def test_fator_risco_ocupado_penaliza():
@@ -185,9 +185,123 @@ def test_laudo_mais_antigo_sobe_score():
     cinco = compute_score(avaliacao_data="2021-09-17", **kwargs)
     dez = compute_score(avaliacao_data="2016-09-17", **kwargs)
     assert recente["score"] < cinco["score"] < dez["score"]
-    assert any("1 ano" in m for m in recente["motivos"])
-    assert any("5 anos" in m for m in cinco["motivos"])
+    assert any("1 ano" in m and "oportunidade" in m for m in recente["motivos"])
+    assert any("5 anos" in m and "oportunidade" in m for m in cinco["motivos"])
     assert any("10 anos" in m and "forte oportunidade" in m for m in dez["motivos"])
+
+
+def test_laudo_antigo_acima_nao_e_overpay():
+    hoje = date(2026, 9, 17)
+    recente = compute_score(
+        title="Casa",
+        current_bid=250000,
+        reference_value=200000,
+        fonte_avaliacao="laudo",
+        avaliacao_data="2026-08-01",
+        hoje=hoje,
+    )
+    antigo = compute_score(
+        title="Casa",
+        current_bid=250000,
+        reference_value=200000,
+        fonte_avaliacao="laudo",
+        avaliacao_data="2016-09-17",
+        hoje=hoje,
+    )
+    assert recente["score"] < antigo["score"]
+    assert any("oportunidade" in m and "não overpay" in m for m in antigo["motivos"])
+    assert any("forte oportunidade" in m for m in antigo["motivos"])
+
+
+def test_nao_citado_limita_score_ao_fundo():
+    result = compute_score(
+        title="Apartamento",
+        current_bid=100000,
+        reference_value=400000,
+        ocupacao="desocupado",
+        riscos={"citacao": "nao_citado", "nao_entrar": True},
+    )
+    assert result["score"] <= 12
+    assert any("não citado" in m for m in result["motivos"])
+    assert result["motivos"][0].startswith("executado não citado") or any(
+        "não entrar" in m for m in result["motivos"][:2]
+    )
+
+
+def test_usufruto_e_meacao_limitam_score():
+    usufruto = compute_score(
+        title="Casa",
+        current_bid=100000,
+        reference_value=400000,
+        riscos={"usufruto": True},
+    )
+    meacao = compute_score(
+        title="Casa",
+        current_bid=100000,
+        reference_value=400000,
+        riscos={"meacao": True, "meacao_trecho": "Penhora da meação do executado sobre o imóvel"},
+    )
+    assert usufruto["score"] <= 28
+    assert meacao["score"] <= 28
+    assert any("usufruto" in m for m in usufruto["motivos"])
+    assert any("Penhora da meação" in m for m in meacao["motivos"])
+
+
+def test_citado_nao_aplica_teto():
+    result = compute_score(
+        title="Apartamento",
+        current_bid=100000,
+        reference_value=400000,
+        ocupacao="desocupado",
+        riscos={"citacao": "citado", "citacao_fonte": "datajud"},
+    )
+    assert result["score"] > 12
+    assert any("citado (DataJud)" in m for m in result["motivos"])
+
+
+def test_docs_limitados_alerta_sem_teto_de_meacao():
+    result = compute_score(
+        title="Apartamento Jundiapeba",
+        current_bid=25978.19,
+        reference_value=51956.37,
+        riscos={"docs_limitados": True, "datajud": "nao_encontrado"},
+    )
+    assert result["score"] > 28
+    assert any("análise limitada" in m for m in result["motivos"])
+    assert any("DataJud" in m for m in result["motivos"])
+    assert not any("vende 100%" in m for m in result["motivos"])
+
+
+def test_segunda_praca_desconto_pelo_valor_atual():
+    result = compute_score(
+        title="Terreno Porto Ferreira",
+        current_bid=4_207_866.06,
+        minimum_bid=7_013_110.10,
+        reference_value=7_013_110.10,
+        fonte_avaliacao="laudo",
+        tipo="terreno",
+    )
+    assert any("40% abaixo da avaliação" in m for m in result["motivos"])
+    assert not any(m.startswith("0% abaixo") for m in result["motivos"])
+
+
+def test_docs_limitados_nao_afirma_ocupacao_nem_condo():
+    result = compute_score(
+        title="Terreno",
+        description="Imóvel desocupado, sem débitos condominiais. 2ª praça.",
+        current_bid=4_207_866.06,
+        minimum_bid=7_013_110.10,
+        reference_value=7_013_110.10,
+        ocupacao="desocupado",
+        tem_divida=False,
+        tipo="terreno",
+        fonte_avaliacao="laudo",
+        riscos={"docs_limitados": True},
+    )
+    assert any("40% abaixo" in m for m in result["motivos"])
+    assert not any(m.startswith("desocupado") for m in result["motivos"])
+    assert not any("sem débitos de condomínio" in m for m in result["motivos"])
+    assert any("análise limitada" in m for m in result["motivos"])
 
 
 if __name__ == "__main__":
@@ -206,4 +320,11 @@ if __name__ == "__main__":
     test_alerta_quando_lance_atual_supera_avaliacao()
     test_venal_nao_penaliza_lance_acima_do_iptu()
     test_laudo_mais_antigo_sobe_score()
+    test_laudo_antigo_acima_nao_e_overpay()
+    test_nao_citado_limita_score_ao_fundo()
+    test_usufruto_e_meacao_limitam_score()
+    test_citado_nao_aplica_teto()
+    test_docs_limitados_alerta_sem_teto_de_meacao()
+    test_segunda_praca_desconto_pelo_valor_atual()
+    test_docs_limitados_nao_afirma_ocupacao_nem_condo()
     print("ok")
