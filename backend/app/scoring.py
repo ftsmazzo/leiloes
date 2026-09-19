@@ -1,8 +1,8 @@
 """
 Score de oportunidade por lote (0-100) + motivos, calculado a partir do que
 já está disponível: desconto vs. referência de preço (quando existe — ver
-market_price.py, cobertura ainda pequena de propósito), menção de
-ocupação/dívida no anúncio, e avanço de praça.
+market_price.py, cobertura ainda pequena de propósito), ocupação, dívidas
+com valor, avanço de praça e qualidade da fonte (laudo vs. venal de IPTU).
 
 Decisão de produto (conversa com o dono do catálogo): quando falta
 referência de preço — hoje a maioria dos lotes, só ~7% têm avaliação do
@@ -10,6 +10,9 @@ edital e a tabela de mercado cobre 1 cidade — o score NÃO vira "sem
 desconto". O fator de desconto fica de fora do cálculo (não conta como
 nota zero) e um aviso explícito (`tem_comparacao_preco=False`) avisa que
 o número é parcial, calculado só com os fatores que têm dado.
+
+Valor venal de IPTU não é laudo de mercado: lance acima do venal é comum
+e não conta como overpay. Lance abaixo do venal ainda é sinal positivo.
 """
 from __future__ import annotations
 
@@ -17,14 +20,35 @@ import re
 from typing import Any, Optional
 
 # peso de cada fator quando presente; renormalizado entre os que têm dado
-PESO_DESCONTO = 0.60
-PESO_RISCO = 0.25
-PESO_PRACA = 0.15
+PESO_DESCONTO = 0.40
+PESO_RISCO = 0.20
+PESO_DIVIDA = 0.20
+PESO_PRACA = 0.10
+PESO_QUALIDADE = 0.10
 
 RE_OCUPADO = re.compile(r"\bocupad[oa]\b", re.I)
 RE_DESOCUPADO = re.compile(r"\b(?:des|não\s+)ocupad[oa]|\blivre\b|\bvazi[oa]\b", re.I)
 RE_DIVIDA = re.compile(r"d[ií]vida|d[eé]bito|em atraso|inadimpl[êe]nc", re.I)
 RE_PRACA = re.compile(r"(\d)\s*[ªa]\s*pra[çc]a", re.I)
+
+FONTE_MERCADO = "mercado"
+FONTE_LAUDO = "laudo"
+FONTE_VENAL = "venal_imovel"
+
+
+def _brl(value: float) -> str:
+    return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _total_dividas(dividas: Optional[dict[str, Any]]) -> float:
+    if not isinstance(dividas, dict):
+        return 0.0
+    total = 0.0
+    for key in ("iptu", "condominio"):
+        raw = dividas.get(key)
+        if isinstance(raw, (int, float)) and raw > 0:
+            total += float(raw)
+    return total
 
 
 def _fator_desconto(
@@ -32,27 +56,40 @@ def _fator_desconto(
     minimum_bid: Optional[float],
     reference_value: Optional[float],
     valor_mercado_estimado: Optional[float],
-) -> tuple[Optional[float], Optional[str]]:
+    fonte_avaliacao: Optional[str] = None,
+) -> tuple[Optional[float], Optional[str], Optional[str]]:
+    """nota, detalhe, fonte usada (mercado/laudo/venal_imovel)."""
     lance = current_bid if current_bid is not None else minimum_bid
     if lance is None or lance <= 0:
-        return None, None
+        return None, None, None
     if valor_mercado_estimado and valor_mercado_estimado > 0:
-        referencia, fonte = valor_mercado_estimado, "referência de mercado"
+        referencia, fonte, rotulo = valor_mercado_estimado, FONTE_MERCADO, "referência de mercado"
     elif reference_value and reference_value > 0:
-        referencia, fonte = reference_value, "avaliação do edital"
+        fonte = fonte_avaliacao if fonte_avaliacao in (FONTE_LAUDO, FONTE_VENAL) else FONTE_LAUDO
+        rotulo = (
+            "valor venal do imóvel (IPTU)"
+            if fonte == FONTE_VENAL
+            else "avaliação do edital"
+        )
+        referencia = reference_value
     else:
-        return None, None
+        return None, None, None
     desconto_pct = (referencia - lance) / referencia
+    if fonte == FONTE_VENAL and desconto_pct < 0:
+        detalhe = (
+            f"lance acima do valor venal do imóvel ({_brl(referencia)}); "
+            "venal de IPTU não é preço de mercado — não conta como overpay"
+        )
+        return None, detalhe, fonte
     nota = max(-1.0, min(1.0, desconto_pct / 0.5))  # 50% de desconto satura a nota
     sinal = "abaixo" if desconto_pct >= 0 else "acima"
-    detalhe = f"{abs(desconto_pct) * 100:.0f}% {sinal} da {fonte}"
-    return nota, detalhe
+    detalhe = f"{abs(desconto_pct) * 100:.0f}% {sinal} da {rotulo}"
+    return nota, detalhe, fonte
 
 
 def _fator_risco(
     blob: str,
     ocupacao: Optional[str] = None,
-    tem_divida: Optional[bool] = None,
 ) -> tuple[float, str]:
     if ocupacao == "desocupado":
         desocupado, ocupado = True, False
@@ -61,22 +98,39 @@ def _fator_risco(
     else:
         desocupado = bool(RE_DESOCUPADO.search(blob))
         ocupado = bool(RE_OCUPADO.search(blob)) and not desocupado
-    if tem_divida is True:
-        divida = True
-    elif tem_divida is False:
-        divida = False
-    else:
-        divida = bool(RE_DIVIDA.search(blob))
-    fonte_risco = "edital" if ocupacao or tem_divida is not None else "anúncio"
-    if ocupado and divida:
-        return -1.0, f"ocupado e com menção de dívida — risco jurídico alto ({fonte_risco})"
+    fonte_risco = "edital" if ocupacao else "anúncio"
     if ocupado:
         return -0.6, f"ocupado — provável ação de desocupação ({fonte_risco})"
-    if divida:
-        return -0.4, f"menção de dívida/débito no {fonte_risco}"
     if desocupado:
-        return 0.3, f"desocupado (declarado no {fonte_risco})"
-    return 0.0, "sem menção de ocupação/dívida — verificar edital"
+        return 0.4, f"desocupado (declarado no {fonte_risco})"
+    return 0.0, "sem menção de ocupação — verificar edital"
+
+
+def _fator_divida(
+    blob: str,
+    *,
+    tem_divida: Optional[bool] = None,
+    dividas: Optional[dict[str, Any]] = None,
+    current_bid: Optional[float] = None,
+    minimum_bid: Optional[float] = None,
+) -> tuple[float, str]:
+    lance = current_bid if current_bid is not None else minimum_bid
+    total = _total_dividas(dividas)
+    if tem_divida is False and total <= 0:
+        return 0.4, "sem débitos relevantes no edital"
+    if total > 0 and lance and lance > 0:
+        ratio = total / lance
+        detalhe = f"débitos {_brl(total)} ({ratio * 100:.1f}% do lance)"
+        if ratio < 0.01:
+            return 0.2, detalhe + " — impacto baixo no lance"
+        if ratio < 0.05:
+            return -0.2, detalhe
+        if ratio < 0.15:
+            return -0.6, detalhe + " — peso relevante no custo"
+        return -1.0, detalhe + " — dívida alta frente ao lance"
+    if tem_divida is True or (tem_divida is None and RE_DIVIDA.search(blob)):
+        return -0.35, "menção de dívida/débito sem valor consolidado"
+    return 0.0, None
 
 
 def _fator_praca(blob: str) -> tuple[float, Optional[str]]:
@@ -91,6 +145,16 @@ def _fator_praca(blob: str) -> tuple[float, Optional[str]]:
     return 1.0, f"já na {n}ª praça — desconto judicial grande, atenção ao prazo"
 
 
+def _fator_qualidade(fonte: Optional[str]) -> tuple[Optional[float], Optional[str]]:
+    if fonte == FONTE_MERCADO:
+        return 0.7, "comparação com preço de mercado da região"
+    if fonte == FONTE_LAUDO:
+        return 0.4, "comparação com laudo/avaliação do processo"
+    if fonte == FONTE_VENAL:
+        return -0.3, "só há valor venal de IPTU — costuma ficar abaixo do mercado"
+    return None, None
+
+
 def compute_score(
     *,
     title: str,
@@ -101,29 +165,60 @@ def compute_score(
     valor_mercado_estimado: Optional[float] = None,
     ocupacao: Optional[str] = None,
     tem_divida: Optional[bool] = None,
+    fonte_avaliacao: Optional[str] = None,
+    dividas: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     blob = f"{title} {description or ''}"
 
-    nota_desconto, detalhe_desconto = _fator_desconto(
-        current_bid, minimum_bid, reference_value, valor_mercado_estimado
+    nota_desconto, detalhe_desconto, fonte_usada = _fator_desconto(
+        current_bid,
+        minimum_bid,
+        reference_value,
+        valor_mercado_estimado,
+        fonte_avaliacao,
     )
-    nota_risco, detalhe_risco = _fator_risco(blob, ocupacao=ocupacao, tem_divida=tem_divida)
+    nota_risco, detalhe_risco = _fator_risco(blob, ocupacao=ocupacao)
+    nota_divida, detalhe_divida = _fator_divida(
+        blob,
+        tem_divida=tem_divida,
+        dividas=dividas,
+        current_bid=current_bid,
+        minimum_bid=minimum_bid,
+    )
     nota_praca, detalhe_praca = _fator_praca(blob)
+    nota_qualidade, detalhe_qualidade = _fator_qualidade(fonte_usada)
 
-    fatores = [(PESO_DESCONTO, nota_desconto), (PESO_RISCO, nota_risco), (PESO_PRACA, nota_praca)]
+    fatores = [
+        (PESO_DESCONTO, nota_desconto),
+        (PESO_RISCO, nota_risco),
+        (PESO_DIVIDA, nota_divida),
+        (PESO_PRACA, nota_praca),
+        (PESO_QUALIDADE, nota_qualidade),
+    ]
     presentes = [(peso, nota) for peso, nota in fatores if nota is not None]
     peso_total = sum(peso for peso, _ in presentes) or 1.0
     media = sum(peso * nota for peso, nota in presentes) / peso_total
     score = round((media + 1) / 2 * 100)
     score = max(0, min(100, score))
 
-    motivos = [d for d in (detalhe_desconto, detalhe_risco, detalhe_praca) if d]
-    tem_comparacao_preco = nota_desconto is not None
-    if not tem_comparacao_preco:
+    motivos = [
+        d
+        for d in (
+            detalhe_desconto,
+            detalhe_risco,
+            detalhe_divida,
+            detalhe_praca,
+            detalhe_qualidade,
+        )
+        if d
+    ]
+    tem_comparacao_preco = fonte_usada in (FONTE_MERCADO, FONTE_LAUDO) and nota_desconto is not None
+    if fonte_usada is None:
         motivos.insert(0, "sem referência de preço pra comparar — score calculado só com risco/praça")
 
     return {
         "score": score,
         "tem_comparacao_preco": tem_comparacao_preco,
         "motivos": motivos,
+        "fonte_avaliacao": fonte_usada,
     }
