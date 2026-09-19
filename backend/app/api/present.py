@@ -43,6 +43,8 @@ def lot_to_out(lot: LotModel, source: str) -> LotOut:
         dividas=extra.get("dividas") if isinstance(extra.get("dividas"), dict) else None,
         avaliacao_edital=extra.get("avaliacao_edital") if isinstance(extra.get("avaliacao_edital"), (int, float)) else None,
         avaliacao_fonte=extra.get("avaliacao_fonte") if extra.get("avaliacao_fonte") in ("laudo", "venal_imovel") else None,
+        avaliacao_data=extra.get("avaliacao_data") if isinstance(extra.get("avaliacao_data"), str) else None,
+        avaliacao_data_origem=extra.get("avaliacao_data_origem") if extra.get("avaliacao_data_origem") in ("laudo", "processo") else None,
         status=extra.get("status") if extra.get("status") in ("aberto", "aguardando", "encerrado") else None,
         minimum_bid=lot.minimum_bid,
         current_bid=lot.current_bid,

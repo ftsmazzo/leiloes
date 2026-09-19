@@ -1,3 +1,5 @@
+from datetime import date
+
 from app.scoring import compute_score
 
 
@@ -112,6 +114,24 @@ def test_venal_nao_penaliza_lance_acima_do_iptu():
     assert any("venal" in m.lower() for m in venal["motivos"])
 
 
+def test_laudo_mais_antigo_sobe_score():
+    hoje = date(2026, 9, 17)
+    kwargs = dict(
+        title="Apartamento",
+        current_bid=200000,
+        reference_value=400000,
+        fonte_avaliacao="laudo",
+        hoje=hoje,
+    )
+    recente = compute_score(avaliacao_data="2025-09-17", **kwargs)
+    cinco = compute_score(avaliacao_data="2021-09-17", **kwargs)
+    dez = compute_score(avaliacao_data="2016-09-17", **kwargs)
+    assert recente["score"] < cinco["score"] < dez["score"]
+    assert any("1 ano" in m for m in recente["motivos"])
+    assert any("5 anos" in m for m in cinco["motivos"])
+    assert any("10 anos" in m and "forte oportunidade" in m for m in dez["motivos"])
+
+
 if __name__ == "__main__":
     test_score_sem_nenhuma_referencia_de_preco_fica_parcial()
     test_score_com_desconto_grande_sobe_e_avisa_fonte()
@@ -124,4 +144,5 @@ if __name__ == "__main__":
     test_fator_praca_avancada_da_bonus()
     test_divida_pequena_nao_derruba_score()
     test_venal_nao_penaliza_lance_acima_do_iptu()
+    test_laudo_mais_antigo_sobe_score()
     print("ok")
