@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from app.orquestrador import snapshot_preco
@@ -13,6 +14,12 @@ from app.edital import (
 from app.scrapers.extract import leilao_status
 from app.scrapers.soleon import lots_from_imovel_list
 from app.scoring import compute_score
+
+# app.config carrega o .env de verdade ao importar (inclusive o token pago da
+# Infosimples). Sem isso, testes que chamam avaliar_lote sem fetch_infosimples
+# explícito fariam uma chamada real e cobrada. Nenhum teste deste arquivo deve
+# rodar com o token de verdade — quem precisa dele injeta e restaura sozinho.
+os.environ.pop("INFOSIMPLES_API_TOKEN", None)
 
 ROOT = Path(__file__).resolve().parent
 HTML = (ROOT / "fixtures" / "edital_links.html").read_text(encoding="utf-8")
@@ -524,6 +531,87 @@ def test_avaliar_lote_consulta_datajud_injetado():
         edital_mod.extract_pdf_text = original
 
 
+def test_avaliar_lote_enriquece_com_infosimples_quando_tem_token():
+    from app import edital as edital_mod
+
+    original = edital_mod.extract_pdf_text
+    tinha_token = os.environ.get("INFOSIMPLES_API_TOKEN")
+    os.environ["INFOSIMPLES_API_TOKEN"] = "abc"
+
+    def fake_extract(_data: bytes):
+        return ("Processo n. 0001234-11.2012.8.26.0100. Laudo de avaliação R$ 400.000,00.", False)
+
+    def fake_infosimples(_url, _params):
+        return {
+            "code": 200,
+            "data": [{"processos": [{"normalizado_valor_acao": 5000.0, "foro": "Foro Central"}]}],
+        }
+
+    edital_mod.extract_pdf_text = fake_extract
+    try:
+        extra = avaliar_lote(
+            title="Apartamento",
+            description=None,
+            url="https://example.test/item/1",
+            current_bid=202408.70,
+            minimum_bid=202408.70,
+            reference_value=None,
+            extra={},
+            fetch_page=lambda _u: HTML,
+            fetch_file=lambda _u: b"%PDF-1.4 x",
+            fetch_datajud=lambda _u, _p: {},
+            fetch_infosimples=fake_infosimples,
+            write_ai=False,
+        )
+        assert extra["infosimples_valor_causa"] == 5000.0
+        assert extra["infosimples_foro"] == "Foro Central"
+    finally:
+        edital_mod.extract_pdf_text = original
+        if tinha_token is None:
+            os.environ.pop("INFOSIMPLES_API_TOKEN", None)
+        else:
+            os.environ["INFOSIMPLES_API_TOKEN"] = tinha_token
+
+
+def test_avaliar_lote_nao_recobra_infosimples_pro_mesmo_processo():
+    """Chamada paga (R$0,20) — reavaliar o mesmo lote não pode cobrar de novo."""
+    from app import edital as edital_mod
+
+    original = edital_mod.extract_pdf_text
+    tinha_token = os.environ.get("INFOSIMPLES_API_TOKEN")
+    os.environ["INFOSIMPLES_API_TOKEN"] = "abc"
+
+    def fake_extract(_data: bytes):
+        return ("Processo n. 0001234-11.2012.8.26.0100. Laudo de avaliação R$ 400.000,00.", False)
+
+    def fake_infosimples_nao_deveria_chamar(_url, _params):
+        raise AssertionError("já tinha consultado esse processo — não deveria cobrar de novo")
+
+    edital_mod.extract_pdf_text = fake_extract
+    try:
+        extra = avaliar_lote(
+            title="Apartamento",
+            description=None,
+            url="https://example.test/item/1",
+            current_bid=202408.70,
+            minimum_bid=202408.70,
+            reference_value=None,
+            extra={"infosimples_consultado_para": "0001234-11.2012.8.26.0100", "infosimples_valor_causa": 5000.0},
+            fetch_page=lambda _u: HTML,
+            fetch_file=lambda _u: b"%PDF-1.4 x",
+            fetch_datajud=lambda _u, _p: {},
+            fetch_infosimples=fake_infosimples_nao_deveria_chamar,
+            write_ai=False,
+        )
+        assert extra["infosimples_valor_causa"] == 5000.0
+    finally:
+        edital_mod.extract_pdf_text = original
+        if tinha_token is None:
+            os.environ.pop("INFOSIMPLES_API_TOKEN", None)
+        else:
+            os.environ["INFOSIMPLES_API_TOKEN"] = tinha_token
+
+
 if __name__ == "__main__":
     test_extract_pdf_text_usa_pypdfium2_quando_pypdf_falha()
     test_extract_pdf_text_carimbo_esaj_sozinho_conta_como_escaneado()
@@ -553,4 +641,6 @@ if __name__ == "__main__":
     test_avaliar_lote_respeita_valor_atual_da_pagina()
     test_parecer_diz_quando_faltou_documento_e_datajud()
     test_avaliar_lote_consulta_datajud_injetado()
+    test_avaliar_lote_enriquece_com_infosimples_quando_tem_token()
+    test_avaliar_lote_nao_recobra_infosimples_pro_mesmo_processo()
     print("ok")

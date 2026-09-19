@@ -20,6 +20,7 @@ from bs4 import BeautifulSoup
 
 from app import edital
 from app.datajud import consultar_datajud, merge_riscos
+from app.infosimples import consultar_infosimples, infosimples_disponivel, merge_infosimples
 from app.ocr import ocr_pdf
 from app.scrapers.extract import leilao_status, tipo_from_text
 from app.scrapers.listing import merge_pracas, pracas_from_html
@@ -152,6 +153,7 @@ def avaliar(
     fetch_page=None,
     fetch_file=None,
     fetch_datajud=None,
+    fetch_infosimples=None,
     write_ai: bool = True,
     anexos: Optional[list[tuple[str, bytes]]] = None,
     ocr=None,
@@ -210,6 +212,13 @@ def avaliar(
     if isinstance(cnj, str) and cnj:
         dj = consultar_datajud(cnj, fetch=fetch_datajud)
         riscos = merge_riscos(riscos, dj)
+        # Infosimples é chamada paga (R$0,20/consulta) — só roda uma vez por
+        # processo. Se já consultamos esse CNJ numa avaliação anterior deste
+        # mesmo lote, o valor já está em extra e não cobramos de novo.
+        ja_consultado = extra.get("infosimples_consultado_para") == cnj
+        if infosimples_disponivel() and not ja_consultado:
+            info = consultar_infosimples(cnj, fetch=fetch_infosimples)
+            out = merge_infosimples(out, info)
     docs_limitados = not _tem_peca_util(stored_docs)
     if docs_limitados:
         out["docs_limitados"] = True
@@ -290,6 +299,8 @@ def avaliar(
         "processo_cnj": out.get("processo_cnj"),
         "riscos": riscos or None,
         "nao_entrar": bool(out.get("nao_entrar")),
+        "infosimples_valor_causa": out.get("infosimples_valor_causa"),
+        "infosimples_peticoes_recentes": out.get("infosimples_peticoes_recentes"),
     }
 
     # 5. Parecer — sem IA se a leitura foi só edital/página

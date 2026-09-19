@@ -490,6 +490,12 @@ def parecer_from_facts(facts: dict[str, Any]) -> str:
         )
     if riscos.get("datajud") in ("nao_encontrado", "indisponivel"):
         linhas.append("DataJud não trouxe movimentos deste processo; citação não confirmada.")
+    valor_causa = facts.get("infosimples_valor_causa")
+    if isinstance(valor_causa, (int, float)) and valor_causa > 0:
+        linhas.append(
+            f"Valor da causa que originou a execução: R$ {valor_causa:,.2f} "
+            "(dívida original, não é o valor do imóvel).".replace(",", "X").replace(".", ",").replace("X", ".")
+        )
     if not linhas:
         return "Não foi possível montar o parecer com os indícios disponíveis."
     return " ".join(linhas)
@@ -527,6 +533,8 @@ def _mistral_parecer(facts: dict[str, Any]) -> str | None:
         "riscos": facts.get("riscos"),
         "docs_limitados": bool(facts.get("docs_limitados")),
         "nao_entrar": bool((facts.get("riscos") or {}).get("nao_entrar") or facts.get("nao_entrar")),
+        "valor_causa_execucao": facts.get("infosimples_valor_causa"),
+        "peticoes_recentes_processo": facts.get("infosimples_peticoes_recentes"),
     }
     try:
         r = httpx.post(
@@ -572,6 +580,10 @@ def _mistral_parecer(facts: dict[str, Any]) -> str | None:
                             "não trouxe movimentos. Se docs_limitados, diga que faltou texto de "
                             "matrícula/laudo e não afirme o que não leu. "
                             "DataJud só traz movimentos, não peças do processo. "
+                            "valor_causa_execucao é o valor da dívida que originou a execução "
+                            "(vindo do processo), NUNCA o valor do imóvel nem a avaliação — não "
+                            "confunda os dois. peticoes_recentes_processo é só contexto de "
+                            "atividade do processo, não confirma nem descarta risco nenhum. "
                             "Não use adjetivo de venda. Se faltar dado, diga que falta. "
                             "Explique o score com os motivos."
                         ),
@@ -620,6 +632,7 @@ def avaliar_lote(
     fetch_page=fetch_html,
     fetch_file=fetch_pdf,
     fetch_datajud=None,
+    fetch_infosimples=None,
     write_ai: bool = True,
     anexos: Optional[list[tuple[str, bytes]]] = None,
     ocr=None,
@@ -638,6 +651,7 @@ def avaliar_lote(
         fetch_page=fetch_page,
         fetch_file=fetch_file,
         fetch_datajud=fetch_datajud,
+        fetch_infosimples=fetch_infosimples,
         write_ai=write_ai,
         anexos=anexos,
         ocr=ocr,
