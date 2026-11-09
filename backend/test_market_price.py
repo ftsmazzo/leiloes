@@ -1,4 +1,10 @@
-from app.scrapers.market_price import PRICE_PER_M2_BY_CIDADE, estimate_market_value, price_per_m2
+from app.scrapers.extract import area_from_text
+from app.scrapers.market_price import (
+    PRICE_PER_M2_BY_CIDADE,
+    _area_m2,
+    estimate_market_value,
+    price_per_m2,
+)
 
 
 def test_tabela_tem_56_cidades_do_informe():
@@ -49,6 +55,21 @@ def test_estimate_market_value_nao_aplica_fipezap_em_terreno():
     }
 
 
+def test_area_br_com_mais_de_duas_casas_nao_vira_milhar():
+    """Vegas: «área total de 76,7508 m²» não pode virar 7508 m²."""
+    assert area_from_text("área total de 76,7508 m², sendo 66,1738 m²") == "76,7508 m²"
+    assert _area_m2("76,7508 m²") == 76.7508
+    assert _area_m2("1.234,56 m²") == 1234.56
+    mkt = estimate_market_value("Ribeirão Preto", "76,7508 m²", tipo="apartamento")
+    assert mkt is not None
+    assert mkt["valor_mercado_estimado"] == round(5344.0 * 76.7508, 2)
+
+
+def test_estimate_recusa_area_absurda_em_apartamento():
+    assert estimate_market_value("Ribeirão Preto", "6908 m²", tipo="apartamento") is None
+    assert estimate_market_value("Ribeirão Preto", "4200 m²", tipo="apartamento") is None
+
+
 if __name__ == "__main__":
     test_tabela_tem_56_cidades_do_informe()
     test_price_per_m2_known_city_case_and_accent_insensitive()
@@ -56,4 +77,6 @@ if __name__ == "__main__":
     test_estimate_market_value_known_city_and_area()
     test_estimate_market_value_missing_city_or_area_returns_none()
     test_estimate_market_value_nao_aplica_fipezap_em_terreno()
+    test_area_br_com_mais_de_duas_casas_nao_vira_milhar()
+    test_estimate_recusa_area_absurda_em_apartamento()
     print("ok")
