@@ -15,7 +15,7 @@ from app.scrapers.persist import persist_auctions
 from app.scrapers.registry import all_scrapers
 from app.scrapers.extract import enrich_extra, extra_json
 from app.scrapers.market_price import estimate_market_value
-from app.scoring import compute_score
+from app.scoring import apply_score, compute_score
 from app.alerts import should_alert, format_alert_message
 from app.notify import send_telegram_alert, telegram_configured
 import json
@@ -67,7 +67,11 @@ def _enrich_auctions(auctions, cap: int = 12) -> None:
             filled = enrich_extra(lot.title, lot.description, extra, use_ai=used < cap)
             if filled.get("extract") in ("gliner", "mistral"):
                 used += 1
-            mercado = estimate_market_value(filled.get("cidade"), filled.get("area"))
+            mercado = estimate_market_value(
+                filled.get("cidade"),
+                filled.get("area"),
+                tipo=filled.get("tipo") if isinstance(filled.get("tipo"), str) else None,
+            )
             if mercado:
                 filled.update(mercado)
             score_info = compute_score(
@@ -78,10 +82,13 @@ def _enrich_auctions(auctions, cap: int = 12) -> None:
                 reference_value=lot.reference_value,
                 valor_mercado_estimado=filled.get("valor_mercado_estimado"),
                 riscos=filled.get("riscos") if isinstance(filled.get("riscos"), dict) else None,
+                origem=filled.get("origem") if isinstance(filled.get("origem"), str) else None,
+                source=auction.source,
+                pracas=filled.get("pracas") if isinstance(filled.get("pracas"), list) else None,
+                valor_m2_fonte=filled.get("valor_m2_fonte") if isinstance(filled.get("valor_m2_fonte"), str) else None,
+                tipo=filled.get("tipo") if isinstance(filled.get("tipo"), str) else None,
             )
-            filled["score"] = score_info["score"]
-            filled["score_tem_comparacao_preco"] = score_info["tem_comparacao_preco"]
-            filled["score_motivos"] = score_info["motivos"]
+            apply_score(filled, score_info)
             lot.raw_data = extra_json(filled)
             if filled.get("tipo") and not lot.category:
                 lot.category = str(filled["tipo"])

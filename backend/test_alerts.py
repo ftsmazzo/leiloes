@@ -4,7 +4,7 @@ from app.alerts import format_alert_message, should_alert
 
 
 def test_should_alert_true_above_threshold():
-    assert should_alert({"score": 80}, min_score=70) is True
+    assert should_alert({"score": 80, "avaliado_em": "2026-11-02T12:00:00Z"}, min_score=70) is True
 
 
 def test_should_alert_false_below_threshold():
@@ -23,13 +23,24 @@ def test_should_alert_uses_env_min_score_when_not_passed():
     original = os.environ.get("ALERT_MIN_SCORE")
     os.environ["ALERT_MIN_SCORE"] = "85"
     try:
-        assert should_alert({"score": 80}) is False
-        assert should_alert({"score": 90}) is True
+        assert should_alert({"score": 80, "avaliado_em": "2026-11-02T12:00:00Z"}) is False
+        assert should_alert({"score": 90, "avaliado_em": "2026-11-02T12:00:00Z"}) is True
     finally:
         if original is None:
             os.environ.pop("ALERT_MIN_SCORE", None)
         else:
             os.environ["ALERT_MIN_SCORE"] = original
+
+
+def test_should_alert_false_sem_leitura():
+    assert should_alert({"score": 90}, min_score=70) is False
+
+
+def test_should_alert_false_quando_docs_limitados():
+    assert should_alert(
+        {"score": 90, "avaliado_em": "2026-11-02T12:00:00Z", "docs_limitados": True},
+        min_score=70,
+    ) is False
 
 
 def test_format_alert_message_includes_score_title_motivos_url():
@@ -52,5 +63,7 @@ if __name__ == "__main__":
     test_should_alert_false_without_score()
     test_should_alert_false_when_already_alertado()
     test_should_alert_uses_env_min_score_when_not_passed()
+    test_should_alert_false_sem_leitura()
+    test_should_alert_false_quando_docs_limitados()
     test_format_alert_message_includes_score_title_motivos_url()
     print("ok")

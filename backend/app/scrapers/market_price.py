@@ -1,31 +1,87 @@
 """
 Referência de preço de mercado por cidade, pra comparar com o lance do leilão.
 
-MVP deliberadamente manual: o Índice FipeZap (a fonte nacional mais citável)
-só cobre 56 cidades, quase todas capitais — não cobre o interior, que é onde
-a maioria dos leilões deste catálogo acontece (Formiga-MG, Tietê-SP,
-Guarujá-SP, Lorena-SP, Sertãozinho-SP, Santa Rosa de Viterbo-SP, ...).
-Não tem fonte pública confiável e gratuita pra preço/m² dessas cidades.
+Fonte: Índice FipeZap de Venda Residencial (Fipe + Grupo OLX). Preço médio
+pedido de apartamento pronto, 56 cidades. Não é transação (ITBI) e não cobre
+interior fino (Brodowski, Formiga, Tietê…). Cidade ausente = sem dado —
+nunca ler como desconto zero.
 
-Por isso a tabela abaixo começa quase vazia — só com um valor de fonte
-oficial, de exemplo, pra mostrar o formato. Preencha com número que você
-confia pra cada cidade que importa pro seu catálogo (corretor local, anúncio
-comparável, etc.). Cidade ausente da tabela = sem referência de mercado —
-NUNCA leia isso como "sem desconto"; é dado faltando, não desconto zero.
+Informe: agosto/2026
+https://downloads.fipe.org.br/indices/fipezap/fipezap-202608-residencial-venda.pdf
 """
 from __future__ import annotations
 
 import re
-from typing import Any, Optional
+from typing import Any, Optional, Union
+
+FIPEZAP_MES = "2026-08"
+FIPEZAP_URL = (
+    "https://downloads.fipe.org.br/indices/fipezap/fipezap-202608-residencial-venda.pdf"
+)
 
 # cidade (sem acento, minúscula) -> R$/m²
 PRICE_PER_M2_BY_CIDADE: dict[str, float] = {
-    # Índice FipeZap de Venda Residencial, junho/2026 — única cidade do
-    # catálogo hoje coberta por uma fonte nacional. Substitua/complete com
-    # as cidades reais dos seus leilões.
-    # https://downloads.fipe.org.br/indices/fipezap/fipezap-202606-residencial-venda.pdf
-    "sao paulo": 12055.0,
+    "aracaju": 5826.0,
+    "balneario camboriu": 15343.0,
+    "barueri": 12206.0,
+    "belem": 8843.0,
+    "belo horizonte": 10667.0,
+    "betim": 5087.0,
+    "blumenau": 8177.0,
+    "brasilia": 10369.0,
+    "distrito federal": 10369.0,
+    "campinas": 8089.0,
+    "campo grande": 6830.0,
+    "canoas": 5950.0,
+    "caxias do sul": 6463.0,
+    "contagem": 6210.0,
+    "cuiaba": 7044.0,
+    "curitiba": 11731.0,
+    "diadema": 6936.0,
+    "florianopolis": 13531.0,
+    "fortaleza": 9502.0,
+    "goiania": 8482.0,
+    "guaruja": 7035.0,
+    "guarulhos": 7527.0,
+    "itajai": 13354.0,
+    "itapema": 15403.0,
+    "jaboatao dos guararapes": 6485.0,
+    "joao pessoa": 8387.0,
+    "joinville": 8389.0,
+    "londrina": 5856.0,
+    "maceio": 9974.0,
+    "manaus": 7884.0,
+    "natal": 6439.0,
+    "niteroi": 8057.0,
+    "novo hamburgo": 5367.0,
+    "osasco": 8668.0,
+    "pelotas": 4647.0,
+    "porto alegre": 7510.0,
+    "praia grande": 6814.0,
+    "recife": 8912.0,
+    "ribeirao preto": 5344.0,
+    "rio de janeiro": 11216.0,
+    "salvador": 8653.0,
+    "santa maria": 5514.0,
+    "santo andre": 7951.0,
+    "santos": 8547.0,
+    "sao bernardo do campo": 7444.0,
+    "sao caetano do sul": 9704.0,
+    "sao jose": 9093.0,
+    "sao jose do rio preto": 6056.0,
+    "sao jose dos campos": 9615.0,
+    "sao jose dos pinhais": 6367.0,
+    "sao leopoldo": 5200.0,
+    "sao luis": 8829.0,
+    "sao paulo": 12143.0,
+    "sao vicente": 5118.0,
+    "teresina": 6032.0,
+    "vila velha": 11446.0,
+    "vitoria": 15650.0,
 }
+
+# FipeZap mede apto pronto. Esses tipos não entram na média.
+TIPOS_SEM_FIPEZAP = frozenset({"terreno", "galpao", "chacara", "sala", "veiculo"})
 
 _ACCENT = str.maketrans(
     "áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ",
@@ -40,17 +96,19 @@ def _fold(text: str) -> str:
 
 
 def price_per_m2(cidade: Optional[str]) -> Optional[float]:
-    """R$/m² cadastrado pra cidade, ou None se não tiver referência."""
+    """R$/m² do FipeZap pra cidade, ou None se não tiver referência."""
     if not cidade:
         return None
     return PRICE_PER_M2_BY_CIDADE.get(_fold(cidade))
 
 
-def _area_m2(area: Optional[str]) -> Optional[float]:
-    """Extrai o número de uma string tipo '500 m²' (formato de extract.area_from_text)."""
+def _area_m2(area: Optional[Union[str, int, float]]) -> Optional[float]:
+    """Número de '500 m²' ou float já extraído."""
+    if isinstance(area, (int, float)):
+        return float(area) if area > 0 else None
     if not area:
         return None
-    match = _RE_AREA_NUM.search(area)
+    match = _RE_AREA_NUM.search(str(area))
     if not match:
         return None
     raw = match.group(1).replace(".", "").replace(",", ".")
@@ -61,12 +119,18 @@ def _area_m2(area: Optional[str]) -> Optional[float]:
     return value if value > 0 else None
 
 
-def estimate_market_value(cidade: Optional[str], area: Optional[str]) -> Optional[dict[str, Any]]:
-    """valor_mercado_estimado = preço/m² da cidade × área do lote.
+def estimate_market_value(
+    cidade: Optional[str],
+    area: Optional[Union[str, int, float]],
+    tipo: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    """valor_mercado_estimado = preço/m² FipeZap × área.
 
-    Retorna None quando falta cidade cadastrada na tabela OU área numérica —
-    o chamador não deve tratar None como "sem desconto", e sim "sem dado".
+    None se a cidade não está no índice, se falta área, ou se o tipo
+    não é o que o FipeZap mede (terreno, galpão, etc.).
     """
+    if (tipo or "").lower() in TIPOS_SEM_FIPEZAP:
+        return None
     ppm2 = price_per_m2(cidade)
     area_m2 = _area_m2(area)
     if ppm2 is None or area_m2 is None:
@@ -74,4 +138,6 @@ def estimate_market_value(cidade: Optional[str], area: Optional[str]) -> Optiona
     return {
         "valor_m2_regiao": ppm2,
         "valor_mercado_estimado": round(ppm2 * area_m2, 2),
+        "valor_m2_fonte": "fipezap",
+        "valor_m2_mes": FIPEZAP_MES,
     }

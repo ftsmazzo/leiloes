@@ -13,13 +13,22 @@ from bs4 import BeautifulSoup, Tag
 
 from .base import ScrapedLot
 from .extract import cidade_from_text, extra_json, leilao_status, parse_br_currency, tipo_from_text
+from .listing import merge_pracas, pracas_from_tag
 
 RE_ITEM = re.compile(r"/item/(\d+)/detalhes")
 RE_LEILAO = re.compile(r"/leilao/(\d+)/lotes")
+_LABEL = (
+    r"Cidade|Endere[cç]o|Matr[ií]cula|Comitente|Comarca|Processo|"
+    r"[ÁA]rea(?:\s+(?:privativa|constru[ií]da|[úu]til|do\s+terreno|total))?|"
+    r"Ocupa[cç][aã]o|D[eé]bitos?(?:\s+condominiais)?|IPTU|Condom[ií]nio|"
+    r"Descri[cç][aã]o(?:\s+do\s+im[oó]vel)?|Tipo(?:\s+do\s+bem)?"
+)
 RE_LABEL = re.compile(
-    r"(Cidade|Endere[cç]o|Matr[ií]cula|Comitente|Comarca)\s*:\s*(.+?)(?=\s*(?:Cidade|Endere[cç]o|Matr[ií]cula|Comitente|Comarca|Lance|Processo)\s*:|$)",
+    rf"({_LABEL})\s*:\s*(.+?)(?=\s*(?:{_LABEL}|Lance)\s*:|$)",
     re.I,
 )
+RE_LABEL_TAG = re.compile(rf"^({_LABEL})\s*:?\s*$", re.I)
+RE_MONEY_LABEL = re.compile(r"R\$\s*([\d.]+,\d{2})")
 RE_LANCE = re.compile(r"Lance\s+Inicial[^R$]*R\$\s*([\d.,]+)", re.I)
 RE_AVALIA = re.compile(
     r"avalia[cç][aã]o[^R$]{0,80}R\$\s*([\d.,]+)",
@@ -40,21 +49,102 @@ def _href(tag: Tag) -> str:
     return raw if isinstance(raw, str) else ""
 
 
-def _label_map(blob: str) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for match in RE_LABEL.finditer(blob):
-        key = match.group(1).lower()
+def _money_in(val: str) -> Optional[float]:
+    found = RE_MONEY_LABEL.search(val or "")
+    if found:
+        return parse_br_currency(found.group(1))
+    return parse_br_currency(val)
+
+
+def _ocupacao_of(val: str) -> Optional[str]:
+    clip = re.sub(r"\s+", " ", val or "").strip()[:80]
+    low = clip.lower()
+    if not clip:
+        return None
+    if re.search(r"caso|eventual|se houver|hip[oó]tese|se o im", low):
+        return None
+    if re.search(r"desocupad|im[oó]vel\s+vazi|n[aã]o\s+ocupad", low):
+        return "desocupado"
+    if re.search(r"\bocupad[oa]\b", low):
+        return "ocupado"
+    return None
+
+
+def _put_label(out: dict[str, Any], key: str, val: str) -> None:
+    if not val:
+        return
+    k = key.lower()
+    if k.startswith("cidad"):
+        name = val.split("/")[0].strip()
+        if 2 < len(name) <= 40:
+            out["cidade"] = name
+    elif k.startswith("endere"):
+        out["endereco"] = val[:120]
+    elif k.startswith("matr"):
+        out["matricula"] = val[:40]
+    elif k.startswith("comitente"):
+        out["comitente"] = val[:80]
+    elif k.startswith("comarca"):
+        out["comarca"] = val[:40]
+    elif k.startswith("process"):
+        from app.juridico import RE_CNJ, format_cnj
+
+        found = RE_CNJ.search(val)
+        if found:
+            out["processo_cnj"] = format_cnj(found.group(1))
+    elif k.startswith("área") or k.startswith("area"):
+        out["area"] = val[:40]
+    elif k.startswith("ocupa"):
+        occ = _ocupacao_of(val)
+        if occ:
+            out["ocupacao"] = occ
+    elif k.startswith("iptu"):
+        money = _money_in(val)
+        if money and money > 0:
+            out.setdefault("dividas", {})["iptu"] = money
+    elif "débito" in k or "debito" in k or k.startswith("condom"):
+        money = _money_in(val)
+        if money and money > 0:
+            out.setdefault("dividas", {})["condominio"] = money
+    elif k.startswith("descri"):
+        out["descricao"] = val[:500]
+
+
+def _label_map(blob: str) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for match in RE_LABEL.finditer(blob or ""):
         val = re.sub(r"\s+", " ", match.group(2)).strip(" -,")
-        if key.startswith("cidade"):
-            out["cidade"] = val.split("/")[0].strip()
-        elif key.startswith("endere"):
-            out["endereco"] = val
-        elif key.startswith("matr"):
-            out["matricula"] = val
-        elif key.startswith("comitente"):
-            out["comitente"] = val
-        elif key.startswith("comarca"):
-            out["comarca"] = val
+        _put_label(out, match.group(1), val)
+    return out
+
+
+def _labels_from_soup(soup: BeautifulSoup) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for tag in soup.find_all(["b", "strong"]):
+        name = re.sub(r"\s+", " ", tag.get_text(" ", strip=True)).strip()
+        if not RE_LABEL_TAG.match(name.rstrip(":")) and not RE_LABEL_TAG.match(name):
+            continue
+        key = name.rstrip(":").strip()
+        parts: list[str] = []
+        nxt = tag.next_sibling
+        while nxt is not None:
+            nome = getattr(nxt, "name", None)
+            if nome in ("b", "strong", "h5", "h6"):
+                break
+            if nome == "br":
+                nxt = nxt.next_sibling
+                continue
+            if isinstance(nxt, str):
+                text = nxt.strip()
+            elif nome in ("p", "div"):
+                break
+            else:
+                text = nxt.get_text(" ", strip=True) if hasattr(nxt, "get_text") else ""
+            if text:
+                parts.append(text)
+            nxt = nxt.next_sibling
+        val = re.sub(r"\s+", " ", " ".join(parts)).strip(" -,")
+        _put_label(out, key, val)
     return out
 
 
@@ -85,8 +175,17 @@ def _lot_extra(
     blob: str,
     foto: str | None = None,
     category: str | None = None,
+    root: Tag | None = None,
 ) -> dict[str, Any]:
     labels = _label_map(blob)
+    if root is not None:
+        for key, val in _labels_from_soup(root).items():
+            if key == "dividas" and isinstance(val, dict):
+                merged = dict(labels.get("dividas") or {})
+                merged.update(val)
+                labels["dividas"] = merged
+            elif val and not labels.get(key):
+                labels[key] = val
     cidade = labels.get("cidade") or cidade_from_text(title, blob, labels.get("comarca"))
     tipo = tipo_from_text(title, blob, category)
     extra: dict[str, Any] = {}
@@ -94,13 +193,30 @@ def _lot_extra(
         extra["cidade"] = cidade
     if tipo:
         extra["tipo"] = tipo
-    if labels.get("endereco"):
-        extra["endereco"] = labels["endereco"]
-    if labels.get("matricula"):
-        extra["matricula"] = labels["matricula"]
+    for key in ("endereco", "matricula", "comitente", "comarca", "processo_cnj", "area", "ocupacao", "descricao"):
+        if labels.get(key):
+            extra[key] = labels[key]
+    if isinstance(labels.get("dividas"), dict) and labels["dividas"]:
+        extra["dividas"] = labels["dividas"]
     if foto:
         extra["foto"] = foto
     extra["status"] = leilao_status(title, blob)
+    pracas = pracas_from_tag(root) if root is not None else []
+    if pracas:
+        extra["pracas"] = pracas
+    return extra
+
+
+def fatos_from_html(html: str) -> dict[str, Any]:
+    """Rótulos públicos da página do bem — sem baixar PDF."""
+    if not html or not str(html).strip():
+        return {}
+    soup = BeautifulSoup(html, "html.parser")
+    extra = _lot_extra(title="", blob=soup.get_text(" ", strip=True), root=soup)
+    extra.pop("status", None)
+    extra.pop("foto", None)
+    extra.pop("tipo", None)
+    extra.pop("pracas", None)
     return extra
 
 
@@ -135,7 +251,7 @@ def lots_from_imovel_list(html: str, base_url: str) -> list[ScrapedLot]:
             labeled = RE_LANCE.search(text)
             if labeled:
                 lance = parse_br_currency(labeled.group(1))
-        extra = _lot_extra(title=title, blob=text, foto=_photo_from(block))
+        extra = _lot_extra(title=title, blob=text, foto=_photo_from(block), root=block)
         avalia = RE_AVALIA.search(text)
         reference = parse_br_currency(avalia.group(1)) if avalia else None
         lots.append(
@@ -180,7 +296,7 @@ def lots_from_leiloes_cards(html: str, base_url: str) -> list[ScrapedLot]:
         title = (title_el.get_text(strip=True) if title_el else "") or f"Lote {external_id}"
         labeled = RE_LANCE.search(text)
         lance = parse_br_currency(labeled.group(1)) if labeled else None
-        extra = _lot_extra(title=title, blob=text, foto=_photo_from(card))
+        extra = _lot_extra(title=title, blob=text, foto=_photo_from(card), root=card)
         lots.append(
             ScrapedLot(
                 external_id=external_id,
@@ -245,7 +361,7 @@ def _anchors_to_lot(external_id: str, anchors: list[Tag], base_url: str) -> Opti
         labeled = RE_LANCE.search(blob)
         if labeled:
             lance = parse_br_currency(labeled.group(1))
-    extra = _lot_extra(title=title, blob=blob, foto=foto)
+    extra = _lot_extra(title=title, blob=blob, foto=foto, root=parent)
     avalia = RE_AVALIA.search(blob)
     reference = parse_br_currency(avalia.group(1)) if avalia else None
     return ScrapedLot(
@@ -261,6 +377,9 @@ def _anchors_to_lot(external_id: str, anchors: list[Tag], base_url: str) -> Opti
     )
 
 
+DETAIL_CAP = 40
+
+
 def parse_item_detail(html: str, base_url: str, external_id: str) -> ScrapedLot:
     soup = BeautifulSoup(html, "html.parser")
     title = ""
@@ -271,7 +390,7 @@ def parse_item_detail(html: str, base_url: str, external_id: str) -> ScrapedLot:
         h = soup.select_one("h5")
         title = h.get_text(strip=True) if h else f"Lote {external_id}"
     blob = soup.get_text(" ", strip=True)
-    extra = _lot_extra(title=title, blob=blob, foto=_photo_from(soup))
+    extra = _lot_extra(title=title, blob=blob, foto=_photo_from(soup), root=soup)
     labeled = RE_LANCE.search(blob)
     lance = parse_br_currency(labeled.group(1)) if labeled else None
     avalia = RE_AVALIA.search(blob)
@@ -296,7 +415,8 @@ def parse_item_detail(html: str, base_url: str, external_id: str) -> ScrapedLot:
 
 
 def merge_lot(base: ScrapedLot, detail: ScrapedLot) -> ScrapedLot:
-    extra = {}
+    extra: dict[str, Any] = {}
+    pracas: list = []
     for raw in (base.raw_data, detail.raw_data):
         if not raw:
             continue
@@ -305,7 +425,10 @@ def merge_lot(base: ScrapedLot, detail: ScrapedLot) -> ScrapedLot:
         except json.JSONDecodeError:
             continue
         if isinstance(data, dict):
-            extra.update({k: v for k, v in data.items() if v})
+            pracas = merge_pracas(pracas, data.get("pracas"))
+            extra.update({k: v for k, v in data.items() if v and k != "pracas"})
+    if pracas:
+        extra["pracas"] = pracas
     return ScrapedLot(
         external_id=base.external_id,
         title=detail.title or base.title,
@@ -319,13 +442,75 @@ def merge_lot(base: ScrapedLot, detail: ScrapedLot) -> ScrapedLot:
     )
 
 
+def _lot_extra_dict(lot: ScrapedLot) -> dict[str, Any]:
+    if not lot.raw_data:
+        return {}
+    try:
+        parsed = json.loads(lot.raw_data)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def needs_detail(lot: ScrapedLot) -> bool:
-    extra = {}
-    if lot.raw_data:
+    """Abre /item quando faltam 1ª e 2ª praça, processo, cidade ou endereço."""
+    extra = _lot_extra_dict(lot)
+    pracas = extra.get("pracas") if isinstance(extra.get("pracas"), list) else []
+    ns = {p.get("n") for p in pracas if isinstance(p, dict)}
+    tem_pracas = 1 in ns and 2 in ns
+    tem_processo = bool(extra.get("processo_cnj"))
+    tem_endereco = bool(extra.get("cidade") and extra.get("endereco"))
+    return not tem_pracas or not tem_processo or not tem_endereco
+
+
+def fill_item_details(
+    lots: list[ScrapedLot],
+    *,
+    base_url: str,
+    fetch_html,
+    cap: int = DETAIL_CAP,
+) -> list[ScrapedLot]:
+    """Completa cards rasos com a página pública do bem. Sem PDF."""
+    left = cap
+    out = list(lots)
+    for i, lot in enumerate(out):
+        if left <= 0:
+            break
+        if not needs_detail(lot):
+            continue
+        url = (lot.url or f"{base_url.rstrip('/')}/item/{lot.external_id}/detalhes").split("?")[0]
         try:
-            parsed = json.loads(lot.raw_data)
-            if isinstance(parsed, dict):
-                extra = parsed
-        except json.JSONDecodeError:
-            extra = {}
-    return not extra.get("cidade") or not extra.get("endereco")
+            html = fetch_html(url)
+        except Exception as exc:
+            print(f"detalhe {lot.external_id}: {exc}")
+            continue
+        out[i] = merge_lot(lot, parse_item_detail(html, base_url, lot.external_id))
+        left -= 1
+    return out
+
+
+async def fill_item_details_async(
+    lots: list[ScrapedLot],
+    *,
+    client,
+    base_url: str,
+    cap: int = DETAIL_CAP,
+) -> tuple[list[ScrapedLot], int]:
+    used = 0
+    left = cap
+    out = list(lots)
+    for i, lot in enumerate(out):
+        if left <= 0:
+            break
+        if not needs_detail(lot):
+            continue
+        url = (lot.url or f"{base_url.rstrip('/')}/item/{lot.external_id}/detalhes").split("?")[0]
+        try:
+            r = await client.get(url)
+            r.raise_for_status()
+            out[i] = merge_lot(lot, parse_item_detail(r.text, base_url, lot.external_id))
+            left -= 1
+            used += 1
+        except Exception as exc:
+            print(f"detalhe {lot.external_id}: {exc}")
+    return out, used

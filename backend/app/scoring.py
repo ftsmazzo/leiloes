@@ -462,6 +462,20 @@ def _fator_qualidade(fonte: Optional[str]) -> tuple[Optional[float], Optional[st
     return None, None
 
 
+def apply_score(extra: dict[str, Any], info: dict[str, Any]) -> dict[str, Any]:
+    """Grava score + ledger no raw_data. Card e dossiê leem as mesmas chaves."""
+    extra["score"] = info["score"]
+    extra["score_tem_comparacao_preco"] = info["tem_comparacao_preco"]
+    extra["score_motivos"] = info["motivos"]
+    extra["veredito"] = info.get("veredito")
+    extra["veredito_titulo"] = info.get("veredito_titulo")
+    extra["veredito_corpo"] = info.get("veredito_corpo")
+    extra["regime"] = info.get("regime")
+    extra["cobertura"] = info.get("cobertura")
+    extra["ledger"] = info.get("itens") or []
+    return extra
+
+
 def compute_score(
     *,
     title: str,
@@ -479,104 +493,45 @@ def compute_score(
     hoje: Optional[date] = None,
     tipo: Optional[str] = None,
     riscos: Optional[dict[str, Any]] = None,
+    origem: Optional[str] = None,
+    source: Optional[str] = None,
+    pracas: Optional[list] = None,
+    trechos: Optional[list] = None,
+    peticoes: Optional[list] = None,
+    valor_m2_fonte: Optional[str] = None,
+    avaliado: bool = False,
 ) -> dict[str, Any]:
-    blob = f"{title} {description or ''}"
+    from app.ledger import compute_ledger
 
-    nota_desconto, detalhe_desconto, fonte_usada = _fator_desconto(
-        current_bid,
-        minimum_bid,
-        reference_value,
-        valor_mercado_estimado,
-        fonte_avaliacao,
+    info = compute_ledger(
+        title=title,
+        description=description,
+        current_bid=current_bid,
+        minimum_bid=minimum_bid,
+        reference_value=reference_value,
+        valor_mercado_estimado=valor_mercado_estimado,
+        ocupacao=ocupacao,
+        tem_divida=tem_divida,
+        fonte_avaliacao=fonte_avaliacao,
+        dividas=dividas,
         avaliacao_data=avaliacao_data,
+        avaliacao_data_origem=avaliacao_data_origem,
         hoje=hoje,
+        tipo=tipo,
+        riscos=riscos,
+        origem=origem,
+        source=source,
+        pracas=pracas,
+        trechos=trechos,
+        peticoes=peticoes,
+        valor_m2_fonte=valor_m2_fonte,
+        avaliado=avaliado,
     )
-    alerta_lance = _alerta_lance_vs_avaliacao(
-        current_bid,
-        minimum_bid,
-        reference_value,
-        valor_mercado_estimado,
-        fonte_avaliacao,
-        avaliacao_data=avaliacao_data,
-        hoje=hoje,
-    )
-    nota_concorrencia, concorrencia = _fator_concorrencia(current_bid, minimum_bid)
-    limitados = isinstance(riscos, dict) and riscos.get("docs_limitados")
-    if limitados:
-        nota_risco, detalhe_risco = None, None
-        condo_valor = _money_key(dividas, "condominio") if isinstance(dividas, dict) else 0.0
-        if condo_valor > 0:
-            nota_divida, detalhe_divida = _fator_divida(
-                blob,
-                tem_divida=True,
-                dividas=dividas,
-                current_bid=current_bid,
-                minimum_bid=minimum_bid,
-                tipo=tipo,
-            )
-        else:
-            nota_divida, detalhe_divida = None, None
-    else:
-        nota_risco, detalhe_risco = _fator_risco(blob, ocupacao=ocupacao)
-        nota_divida, detalhe_divida = _fator_divida(
-            blob,
-            tem_divida=tem_divida,
-            dividas=dividas,
-            current_bid=current_bid,
-            minimum_bid=minimum_bid,
-            tipo=tipo,
-        )
-    nota_idade, detalhe_idade = _fator_idade(
-        avaliacao_data, origem=avaliacao_data_origem, hoje=hoje
-    )
-    nota_praca, detalhe_praca = _fator_praca(blob)
-    nota_qualidade, detalhe_qualidade = _fator_qualidade(fonte_usada)
-    nota_juridico, motivos_juridico = _fator_juridico(riscos)
-
-    fatores = [
-        (PESO_DESCONTO, nota_desconto),
-        (PESO_JURIDICO, nota_juridico),
-        (PESO_RISCO, nota_risco),
-        (PESO_DIVIDA, nota_divida),
-        (PESO_IDADE, nota_idade),
-        (PESO_PRACA, nota_praca),
-        (PESO_QUALIDADE, nota_qualidade),
-        (PESO_CONCORRENCIA, nota_concorrencia),
-    ]
-    presentes = [(peso, nota) for peso, nota in fatores if nota is not None]
-    peso_total = sum(peso for peso, _ in presentes) or 1.0
-    media = sum(peso * nota for peso, nota in presentes) / peso_total
-    score = round((media + 1) / 2 * 100)
-    score = max(0, min(100, score))
-    if isinstance(riscos, dict):
-        if riscos.get("citacao") in ("nao_citado", "pendente"):
-            score = min(score, TETO_NAO_CITADO)
-        if riscos.get("usufruto") and riscos.get("usufruto_confianca", "alta") != "baixa":
-            score = min(score, TETO_USUFRUTO)
-        if riscos.get("meacao") and riscos.get("meacao_confianca", "alta") != "baixa":
-            score = min(score, TETO_MEACAO)
-
-    motivos = list(motivos_juridico) + [
-        d
-        for d in (
-            detalhe_desconto,
-            alerta_lance,
-            concorrencia,
-            detalhe_risco,
-            detalhe_divida,
-            detalhe_idade,
-            detalhe_praca,
-            detalhe_qualidade,
-        )
-        if d
-    ]
-    tem_comparacao_preco = fonte_usada in (FONTE_MERCADO, FONTE_LAUDO) and nota_desconto is not None
-    if fonte_usada is None:
-        motivos.insert(0, "sem referência de preço pra comparar — score calculado só com risco/praça")
-
-    return {
-        "score": score,
-        "tem_comparacao_preco": tem_comparacao_preco,
-        "motivos": motivos,
-        "fonte_avaliacao": fonte_usada,
-    }
+    fonte = info.get("fonte_avaliacao")
+    if fonte in ("fipezap", "apify"):
+        info["fonte_avaliacao"] = FONTE_MERCADO
+    elif fonte == "laudo":
+        info["fonte_avaliacao"] = FONTE_LAUDO
+    elif fonte_avaliacao == FONTE_VENAL:
+        info["fonte_avaliacao"] = FONTE_VENAL
+    return info

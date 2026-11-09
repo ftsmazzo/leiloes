@@ -15,6 +15,7 @@ from app.search import cidade_of, filter_lots, raw_dict, score_sort_key, tipo_of
 from app.scrapers.registry import source_names
 from app.scrapers.extract import extract_status
 from app.alerts import alert_status, format_alert_message, should_alert
+from app.leitura import resumir_leitura
 from app.edital import apply_avaliacao_to_lot, avaliar_lote
 from app.orquestrador import MAX_ANEXOS
 
@@ -132,6 +133,20 @@ async def list_lots(
     return [lot_to_out(lot, src) for lot, src in rows]
 
 
+@router.get("/lots/{lot_id}", response_model=LotOut)
+async def get_lot(lot_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(LotModel, AuctionModel.source)
+        .join(AuctionModel, LotModel.auction_id == AuctionModel.id)
+        .where(LotModel.id == lot_id)
+    )
+    row = result.one_or_none()
+    if not row:
+        raise HTTPException(404, "Lote não encontrado")
+    lot, source = row
+    return lot_to_out(lot, source)
+
+
 @router.get("/facets")
 async def facets(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -187,11 +202,17 @@ async def stats(db: AsyncSession = Depends(get_db)):
         .join(AuctionModel, LotModel.auction_id == AuctionModel.id)
         .where(AuctionModel.source != "demo")
     )
+    raws = await db.execute(
+        select(LotModel.raw_data)
+        .join(AuctionModel, LotModel.auction_id == AuctionModel.id)
+        .where(AuctionModel.source != "demo")
+    )
     return {
         "total_auctions": r_auctions.scalar() or 0,
         "total_lots": r_lots.scalar() or 0,
         "extract": extract_status(),
         "alerts": alert_status(),
+        "leitura": resumir_leitura([row[0] for row in raws.all()]),
     }
 
 

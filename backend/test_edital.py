@@ -8,8 +8,12 @@ from app.edital import (
     collect_pdfs,
     extract_pdf_text,
     fields_from_text,
+    payload_parecer,
     parecer_from_facts,
+    peca_nativa_serve,
+    parecer_parece_json,
     precos_from_page,
+    texto_util_para_parecer,
 )
 from app.scrapers.extract import leilao_status
 from app.scrapers.soleon import lots_from_imovel_list
@@ -20,6 +24,15 @@ from app.scoring import compute_score
 # explícito fariam uma chamada real e cobrada. Nenhum teste deste arquivo deve
 # rodar com o token de verdade — quem precisa dele injeta e restaura sozinho.
 os.environ.pop("INFOSIMPLES_API_TOKEN", None)
+os.environ.pop("GLINER_URL", None)
+os.environ.pop("GLINER_API_TOKEN", None)
+os.environ.pop("OPENROUTER_API_KEY", None)
+os.environ.pop("APIFY_TOKEN", None)
+os.environ.pop("APIFY_API_TOKEN", None)
+
+from app import apify_mercado as _apify_mod
+
+_apify_mod._api_token = lambda: ""
 
 ROOT = Path(__file__).resolve().parent
 HTML = (ROOT / "fixtures" / "edital_links.html").read_text(encoding="utf-8")
@@ -165,6 +178,37 @@ def test_fields_from_text_usa_venal_do_imovel_nao_do_terreno():
     assert "83,29" in fields["area"]
 
 
+def test_fields_area_privativa_de_como_na_matricula():
+    fields = fields_from_text(
+        "Apartamento nº 32-A. Área privativa coberta de 41,85 m². Matrícula 144.612."
+    )
+    assert fields["area_edificacao"] == 41.85
+
+
+def test_fields_area_real_privada_do_magnolia():
+    fields = fields_from_text(
+        "apartamento nº 32-A, com a área real privada de 45,29 m² e área real comum "
+        "de 6,25 m², perfazendo uma área real total de 51,54 m², a qual corresponde "
+        "a fração ideal de terreno de 0,781250%"
+    )
+    assert fields["area_edificacao"] == 45.29
+
+
+def test_fields_from_text_le_area_e_avaliacao_na_ordem_invertida_do_trt5():
+    """TRT5 escreve "31,89m² de área privativa" (número antes do rótulo) e usa
+    "Reavaliado em R$X" em vez de "avaliação: R$X" — achado real num edital
+    de verdade do TRT5, o texto original tinha 18 mil caracteres."""
+    texto = (
+        "tendo o dito apartamento 31,89m² de área privativa, composto de "
+        "vestíbulo, quarto e sanitário. Reavaliado em R$420.000,00 "
+        "(Quatrocentos e vinte mil reais) em 30.04.2026."
+    )
+    fields = fields_from_text(texto)
+    assert fields["area_edificacao"] == 31.89
+    assert fields["avaliacao_edital"] == 420000.0
+    assert fields["avaliacao_fonte"] == "laudo"
+
+
 def test_score_venal_acima_nao_conta_como_overpay():
     result = compute_score(
         title="Apartamento Centro",
@@ -303,6 +347,10 @@ def test_avaliar_lote_com_texto_recalcula_score(monkeypatch=None):
         )
         assert extra["avaliacao_edital"] == 400000
         assert extra["ocupacao"] == "desocupado"
+        assert any(
+            t.get("tipo") == "ocupacao" and "desocupad" in (t.get("texto") or "").lower()
+            for t in extra.get("trechos") or []
+        )
         assert extra["score_tem_comparacao_preco"] is True
         assert extra["score"] > 50
         assert "400" in extra["parecer"] or "abaixo" in extra["parecer"].lower() or "Score" in extra["parecer"]
@@ -531,6 +579,48 @@ def test_avaliar_lote_consulta_datajud_injetado():
         edital_mod.extract_pdf_text = original
 
 
+def test_avaliar_lote_url_e_pdf_le_o_edital_direto():
+    """TRT5 não tem página HTML por lote — a URL do lote já é o edital em PDF.
+    Achado real: antes disso, docs ficava sempre vazio e o parecer nunca
+    tinha nenhuma informação, pior que Lance/Zuk."""
+    from app import edital as edital_mod
+
+    original = edital_mod.extract_pdf_text
+
+    def fake_extract(_data: bytes):
+        return (
+            "31,89m² de área privativa. Reavaliado em R$420.000,00. "
+            "Imóvel ocupado pelo executado.",
+            False,
+        )
+
+    def fetch_page_nao_deveria_chamar(_url):
+        raise AssertionError("URL é PDF direto — não deveria tratar como página HTML")
+
+    edital_mod.extract_pdf_text = fake_extract
+    try:
+        extra = avaliar_lote(
+            title="TRT5 apto",
+            description=None,
+            url="https://www.trt5.jus.br/sites/default/files/x/edital.pdf",
+            current_bid=None,
+            minimum_bid=None,
+            reference_value=None,
+            extra={"source": "trt5"},
+            fetch_page=fetch_page_nao_deveria_chamar,
+            fetch_file=lambda _u: b"%PDF-1.4 x",
+            fetch_datajud=lambda _u, _p: {},
+            write_ai=False,
+        )
+        assert len(extra["docs"]) == 1
+        assert extra["docs"][0]["tipo"] == "edital"
+        assert extra["avaliacao_edital"] == 420000.0
+        assert extra["area_edificacao"] == 31.89
+        assert extra["ocupacao"] == "ocupado"
+    finally:
+        edital_mod.extract_pdf_text = original
+
+
 def test_avaliar_lote_enriquece_com_infosimples_quando_tem_token():
     from app import edital as edital_mod
 
@@ -539,7 +629,13 @@ def test_avaliar_lote_enriquece_com_infosimples_quando_tem_token():
     os.environ["INFOSIMPLES_API_TOKEN"] = "abc"
 
     def fake_extract(_data: bytes):
-        return ("Processo n. 0001234-11.2012.8.26.0100. Laudo de avaliação R$ 400.000,00.", False)
+        # Precisa de ≥80 chars e tipo laudo/matrícula/penhora para contar como peça útil;
+        # sem peça, Infosimples não é chamado (custa R$0,20).
+        return (
+            "Laudo de avaliação pericial do imóvel. Processo n. 0001234-11.2012.8.26.0100. "
+            "Valor de avaliação R$ 400.000,00. Área privativa 78 m². Imóvel desocupado.",
+            False,
+        )
 
     def fake_infosimples(_url, _params):
         return {
@@ -563,6 +659,7 @@ def test_avaliar_lote_enriquece_com_infosimples_quando_tem_token():
             fetch_infosimples=fake_infosimples,
             write_ai=False,
         )
+        assert extra.get("docs_limitados") is not True
         assert extra["infosimples_valor_causa"] == 5000.0
         assert extra["infosimples_foro"] == "Foro Central"
     finally:
@@ -612,6 +709,367 @@ def test_avaliar_lote_nao_recobra_infosimples_pro_mesmo_processo():
             os.environ["INFOSIMPLES_API_TOKEN"] = tinha_token
 
 
+def test_avaliar_lote_usa_rotulos_do_html_do_bem():
+    """#80: processo, área, ocupação e débitos vêm do rótulo da página, sem PDF."""
+    html = (ROOT / "fixtures" / "calil_item.html").read_text(encoding="utf-8")
+    extra = avaliar_lote(
+        title="Apartamento",
+        description=None,
+        url="https://www.calilleiloes.com.br/item/1097/detalhes",
+        current_bid=251136.63,
+        minimum_bid=251136.63,
+        reference_value=None,
+        extra={},
+        fetch_page=lambda _u: html,
+        fetch_file=lambda _u: b"",
+        fetch_datajud=lambda _u, _p: {},
+        write_ai=False,
+    )
+    assert extra["processo_cnj"] == "0000467-17.2025.8.26.0094"
+    assert extra["ocupacao"] == "desocupado"
+    assert "100" in str(extra.get("area") or "")
+    assert extra["dividas"]["iptu"] == 3200.0
+    assert extra["dividas"]["condominio"] == 12500.0
+    assert extra["pracas"][0]["n"] == 1
+    assert extra["pracas"][1]["n"] == 2
+
+
+def test_avaliar_lote_rotulo_de_ocupacao_ganha_do_pdf():
+    from app import edital as edital_mod
+
+    html = (ROOT / "fixtures" / "calil_item.html").read_text(encoding="utf-8")
+    html = html.replace("</body>", '<a href="https://cdn.example.test/laudo.pdf">Laudo</a></body>')
+    original = edital_mod.extract_pdf_text
+
+    def fake_extract(_data: bytes):
+        return ("Laudo de avaliação pericial R$ 400.000,00. Imóvel ocupado pelo executado.", False)
+
+    edital_mod.extract_pdf_text = fake_extract
+    try:
+        extra = avaliar_lote(
+            title="Apartamento",
+            description=None,
+            url="https://www.calilleiloes.com.br/item/1097/detalhes",
+            current_bid=251136.63,
+            minimum_bid=251136.63,
+            reference_value=None,
+            extra={},
+            fetch_page=lambda _u: html,
+            fetch_file=lambda _u: b"%PDF-1.4 x",
+            fetch_datajud=lambda _u, _p: {},
+            write_ai=False,
+        )
+        assert extra["ocupacao"] == "desocupado"
+        assert extra["avaliacao_edital"] == 400000
+    finally:
+        edital_mod.extract_pdf_text = original
+
+
+def test_avaliar_lote_ignora_ocupacao_hipotetica_do_edital():
+    from app import edital as edital_mod
+
+    original = edital_mod.extract_pdf_text
+
+    def fake_extract(_data: bytes):
+        return (
+            "§ 3º: Caso o imóvel esteja ocupado, a desocupação dependerá de mandado.",
+            False,
+        )
+
+    edital_mod.extract_pdf_text = fake_extract
+    try:
+        extra = avaliar_lote(
+            title="Terreno",
+            description=None,
+            url="https://example.test/item/1",
+            current_bid=100000,
+            minimum_bid=100000,
+            reference_value=None,
+            extra={},
+            fetch_page=lambda _u: HTML,
+            fetch_file=lambda _u: b"%PDF-1.4 x",
+            fetch_datajud=lambda _u, _p: {},
+            write_ai=False,
+        )
+        assert extra.get("ocupacao") != "ocupado"
+    finally:
+        edital_mod.extract_pdf_text = original
+
+
+def test_avaliar_lote_gliner_preenche_cnj_que_o_regex_nao_viu():
+    from app import edital as edital_mod
+
+    original = edital_mod.extract_pdf_text
+
+    def fake_extract(_data: bytes):
+        return ("Laudo de avaliação pericial R$ 400.000,00. Imóvel desocupado.", False)
+
+    def fake_gliner(_text, _labels):
+        return {"cnj": ["0000467-17.2025.8.26.0094"]}
+
+    edital_mod.extract_pdf_text = fake_extract
+    try:
+        extra = avaliar_lote(
+            title="Apartamento",
+            description=None,
+            url="https://example.test/item/1",
+            current_bid=202408.70,
+            minimum_bid=202408.70,
+            reference_value=None,
+            extra={},
+            fetch_page=lambda _u: HTML,
+            fetch_file=lambda _u: b"%PDF-1.4 x",
+            fetch_datajud=lambda _u, _p: {},
+            fetch_gliner=fake_gliner,
+            write_ai=False,
+        )
+        assert extra["processo_cnj"] == "0000467-17.2025.8.26.0094"
+        assert extra["extract_avaliar"] == "gliner"
+    finally:
+        edital_mod.extract_pdf_text = original
+
+
+def test_texto_util_para_parecer():
+    assert texto_util_para_parecer(blob="", page_text="", trechos=[]) is False
+    assert texto_util_para_parecer(blob="x" * 80) is True
+    assert texto_util_para_parecer(
+        blob="",
+        page_text="",
+        trechos=[{"tipo": "ocupacao", "texto": "Imóvel desocupado.", "origem": "edital"}],
+    ) is True
+
+
+def test_payload_parecer_traz_trecho_de_ocupacao():
+    payload = payload_parecer(
+        {
+            "score": 70,
+            "ocupacao": "desocupado",
+            "trechos": [
+                {"tipo": "ocupacao", "texto": "Imóvel desocupado, sem débitos.", "origem": "edital"},
+                {"tipo": "meacao", "texto": "Penhora da meação do executado.", "origem": "matricula"},
+            ],
+            "texto_docs": "Laudo. Imóvel desocupado. " * 20,
+            "pracas": [{"n": 1, "valor": 100000, "ativa": True}],
+        }
+    )
+    assert any(t.get("tipo") == "ocupacao" for t in payload["trechos"])
+    assert any(t.get("tipo") == "meacao" for t in payload["trechos"])
+    assert payload["texto_docs"]
+    assert payload["pracas"][0]["n"] == 1
+
+
+def test_parecer_from_facts_cita_trecho():
+    text = parecer_from_facts(
+        {
+            "score": 70,
+            "trechos": [{"tipo": "ocupacao", "texto": "Imóvel desocupado no edital.", "origem": "edital"}],
+        }
+    )
+    assert "Imóvel desocupado no edital" in text
+
+
+def test_parecer_ia_roda_mesmo_com_pdf_escaneado_se_ocr_leu_laudo():
+    from app import edital as edital_mod
+
+    original = edital_mod.extract_pdf_text
+    captured: dict = {}
+
+    def fake_extract(_data: bytes):
+        return "", True
+
+    def fake_file(url: str) -> bytes:
+        if "laudo" in url:
+            return b"%PDF-LAUDO"
+        return b"%PDF-SCAN"
+
+    def fake_ocr(data: bytes) -> str:
+        if data.startswith(b"%PDF-LAUDO"):
+            return (
+                "Laudo de avaliação pericial R$ 400.000,00. Imóvel desocupado, "
+                "sem débitos condominiais. Área da edificação 85,00 m². "
+                + ("texto " * 20)
+            )
+        return ""
+
+    def fake_parecer(payload):
+        captured["payload"] = payload
+        return (
+            "Na praça ativa o lance pede R$ 202.408,70 contra avaliação de R$ 400.000,00.\n\n"
+            "O laudo diz «Imóvel desocupado, sem débitos condominiais».\n\n"
+            "Não há trecho de meação nem citação pendente neste recorte.\n\n"
+            "Falta conferir a matrícula original antes do lance."
+        )
+
+    edital_mod.extract_pdf_text = fake_extract
+    try:
+        extra = avaliar_lote(
+            title="Apartamento",
+            description=None,
+            url="https://example.test/item/1",
+            current_bid=202408.70,
+            minimum_bid=202408.70,
+            reference_value=None,
+            extra={},
+            fetch_page=lambda _u: HTML,
+            fetch_file=fake_file,
+            fetch_datajud=lambda _u, _p: {},
+            fetch_parecer=fake_parecer,
+            write_ai=True,
+            ocr=fake_ocr,
+        )
+        assert captured.get("payload"), "IA deveria ter sido chamada com OCR útil"
+        trechos = captured["payload"].get("trechos") or []
+        assert any(t.get("tipo") in ("ocupacao", "meacao") for t in trechos)
+        assert extra["parecer"].startswith("Na praça ativa")
+        assert any(d.get("scanned") for d in extra["docs"])
+        assert any(
+            d.get("ocr") and d.get("tipo") == "laudo" and int(d.get("chars") or 0) >= 80
+            for d in extra["docs"]
+        )
+    finally:
+        edital_mod.extract_pdf_text = original
+
+
+def test_parecer_ia_nao_roda_sem_texto_util():
+    called: list = []
+
+    extra = avaliar_lote(
+        title="x",
+        description=None,
+        url="https://example.test/item/1",
+        current_bid=100000,
+        minimum_bid=100000,
+        reference_value=None,
+        extra={},
+        fetch_page=lambda _u: "<html><body></body></html>",
+        fetch_file=lambda _u: b"",
+        fetch_datajud=lambda _u, _p: {},
+        fetch_parecer=lambda p: called.append(p) or "não deveria",
+        write_ai=True,
+        ocr=lambda _d: "",
+    )
+    assert called == []
+    assert extra["parecer"]
+
+
+def test_parecer_ia_roda_com_so_edital_se_tem_texto():
+    from app import edital as edital_mod
+
+    original = edital_mod.extract_pdf_text
+    captured: dict = {}
+
+    def fake_extract(_data: bytes):
+        return (
+            "Edital de leilão. Imóvel desocupado. Avaliação judicial R$ 400.000,00. "
+            "Processo 0001234-11.2012.8.26.0100. " * 2,
+            False,
+        )
+
+    def fake_parecer(payload):
+        captured["payload"] = payload
+        return "Parágrafo 1.\n\nParágrafo 2.\n\nParágrafo 3.\n\nParágrafo 4."
+
+    html_edital = '<html><body><a href="https://cdn.example.test/edital.pdf">Edital</a></body></html>'
+    edital_mod.extract_pdf_text = fake_extract
+    try:
+        extra = avaliar_lote(
+            title="Casa",
+            description=None,
+            url="https://example.test/item/1",
+            current_bid=200000,
+            minimum_bid=200000,
+            reference_value=None,
+            extra={},
+            fetch_page=lambda _u: html_edital,
+            fetch_file=lambda _u: b"%PDF-1.4 x",
+            fetch_datajud=lambda _u, _p: {},
+            fetch_parecer=fake_parecer,
+            write_ai=True,
+            ocr=lambda _d: "",
+        )
+        assert extra.get("docs_limitados") is True
+        assert captured.get("payload")
+        assert extra["parecer"].startswith("Parágrafo 1")
+    finally:
+        edital_mod.extract_pdf_text = original
+
+
+def test_parecer_parece_json():
+    assert parecer_parece_json('```json { "vantagens": [] } ```')
+    assert parecer_parece_json('{"vantagens": []}')
+    assert not parecer_parece_json("Na praça ativa o lance pede R$ 100 mil.")
+
+
+def test_parecer_json_da_ia_cai_no_template():
+    extra = avaliar_lote(
+        title="Apartamento em Ribeirão Preto",
+        description="Imóvel desocupado. Avaliação judicial R$ 400.000,00.",
+        url="https://example.test/item/1",
+        current_bid=104266,
+        minimum_bid=104266,
+        reference_value=None,
+        extra={},
+        fetch_page=lambda _u: HTML,
+        fetch_file=lambda _u: b"%PDF-1.4 x",
+        fetch_datajud=lambda _u, _p: {},
+        fetch_parecer=lambda _p: '```json { "vantagens": [ { "fato": "x" } ] } ```',
+        write_ai=True,
+        ocr=lambda _d: "",
+    )
+    assert extra["parecer"]
+    assert not extra["parecer"].lstrip().startswith("```")
+    assert not extra["parecer"].lstrip().startswith("{")
+
+
+def test_peca_nativa_matricula_capa_nao_serve():
+    capa = "RI DIGITAL CERTIDÃO DE MATRÍCULA ÍNDICE REGISTRO DE IMÓVEIS " * 4
+    assert peca_nativa_serve("matricula", capa) is False
+    assert peca_nativa_serve(
+        "matricula",
+        "Matrícula 144.612. Área privativa: 41,85 m². " + ("texto " * 40),
+    )
+
+
+def test_matricula_sem_fato_forca_ocr():
+    from app import edital as edital_mod
+
+    original = edital_mod.extract_pdf_text
+    seen = {}
+
+    def fake_extract(_data: bytes):
+        return ("CERTIDÃO DE MATRÍCULA RI DIGITAL ÍNDICE " * 8, False)
+
+    def fake_ocr(data: bytes, max_pages: int = 2) -> str:
+        seen["pages"] = max_pages
+        return (
+            "Matrícula 144.612. Área privativa: 41,85 m². Imóvel desocupado. "
+            + ("texto " * 30)
+        )
+
+    edital_mod.extract_pdf_text = fake_extract
+    try:
+        extra = avaliar_lote(
+            title="Apartamento Magnólia",
+            description=None,
+            url="https://example.test/item/1",
+            current_bid=104266,
+            minimum_bid=104266,
+            reference_value=None,
+            extra={},
+            fetch_page=lambda _u: "<html><body></body></html>",
+            fetch_file=lambda _u: b"",
+            fetch_datajud=lambda _u, _p: {},
+            write_ai=False,
+            ocr=fake_ocr,
+            anexos=[("Matricula Imovel 144.612.pdf", b"%PDF-MAT")],
+        )
+        assert seen.get("pages") == 4
+        assert any(d.get("ocr") and d.get("tipo") == "matricula" for d in extra["docs"])
+        assert extra.get("area") or extra.get("area_edificacao")
+    finally:
+        edital_mod.extract_pdf_text = original
+
+
 if __name__ == "__main__":
     test_extract_pdf_text_usa_pypdfium2_quando_pypdf_falha()
     test_extract_pdf_text_carimbo_esaj_sozinho_conta_como_escaneado()
@@ -622,6 +1080,9 @@ if __name__ == "__main__":
     test_fields_from_text_read_avaliacao_ocupacao_divida()
     test_fields_iptu_sozinho_nao_e_divida_que_pesa()
     test_fields_from_text_usa_venal_do_imovel_nao_do_terreno()
+    test_fields_area_privativa_de_como_na_matricula()
+    test_fields_area_real_privada_do_magnolia()
+    test_fields_from_text_le_area_e_avaliacao_na_ordem_invertida_do_trt5()
     test_score_venal_acima_nao_conta_como_overpay()
     test_score_com_edital_sobe_quando_ha_desconto_e_desocupado()
     test_parecer_from_facts_nao_inventa_numero()
@@ -641,6 +1102,21 @@ if __name__ == "__main__":
     test_avaliar_lote_respeita_valor_atual_da_pagina()
     test_parecer_diz_quando_faltou_documento_e_datajud()
     test_avaliar_lote_consulta_datajud_injetado()
+    test_avaliar_lote_url_e_pdf_le_o_edital_direto()
     test_avaliar_lote_enriquece_com_infosimples_quando_tem_token()
     test_avaliar_lote_nao_recobra_infosimples_pro_mesmo_processo()
+    test_avaliar_lote_usa_rotulos_do_html_do_bem()
+    test_avaliar_lote_rotulo_de_ocupacao_ganha_do_pdf()
+    test_avaliar_lote_ignora_ocupacao_hipotetica_do_edital()
+    test_avaliar_lote_gliner_preenche_cnj_que_o_regex_nao_viu()
+    test_texto_util_para_parecer()
+    test_payload_parecer_traz_trecho_de_ocupacao()
+    test_parecer_from_facts_cita_trecho()
+    test_parecer_ia_roda_mesmo_com_pdf_escaneado_se_ocr_leu_laudo()
+    test_parecer_ia_nao_roda_sem_texto_util()
+    test_parecer_ia_roda_com_so_edital_se_tem_texto()
+    test_parecer_parece_json()
+    test_parecer_json_da_ia_cai_no_template()
+    test_peca_nativa_matricula_capa_nao_serve()
+    test_matricula_sem_fato_forca_ocr()
     print("ok")

@@ -1,6 +1,6 @@
 """
 Vegas Leilões — páginas públicas Soleon.
-Listagem /leiloes. Lotes em /leilao/{id}/lotes. Detalhe /item/{id}/detalhes se faltar cidade/endereço.
+Listagem /leiloes. Lotes em /leilao/{id}/lotes. Detalhe /item/{id}/detalhes se faltar praça, processo, cidade ou endereço.
 Sem login. Parser coberto por fixture — CI não bate no site.
 """
 from __future__ import annotations
@@ -16,13 +16,12 @@ from bs4 import BeautifulSoup, Tag
 from .base import BaseScraper, ScrapedAuction, ScrapedLot
 from .extract import parse_br_currency
 from .soleon import (
+    DETAIL_CAP,
     HEADERS,
     RE_LEILAO,
     _href,
+    fill_item_details_async,
     lots_from_lotes_page,
-    merge_lot,
-    needs_detail,
-    parse_item_detail,
 )
 
 RE_DATE = re.compile(r"(\d{2}/\d{2}/\d{4})\s*(?:às|as)?\s*(\d{2}:\d{2})?", re.I)
@@ -66,7 +65,7 @@ class VegasScraper(BaseScraper):
                 seen_ids.add(auction.external_id)
                 auctions.append(auction)
 
-            detail_left = 25
+            detail_left = DETAIL_CAP
             for auction in auctions:
                 if not auction.external_id.isdigit():
                     continue
@@ -80,20 +79,13 @@ class VegasScraper(BaseScraper):
                     auction.lots = []
                 if detail_left <= 0:
                     continue
-                missing = [lot for lot in auction.lots if needs_detail(lot)]
-                for lot in missing:
-                    if detail_left <= 0:
-                        break
-                    try:
-                        det = await client.get(f"{self.base_url}/item/{lot.external_id}/detalhes")
-                        det.raise_for_status()
-                        parsed = parse_item_detail(det.text, self.base_url, lot.external_id)
-                        filled = merge_lot(lot, parsed)
-                        idx = auction.lots.index(lot)
-                        auction.lots[idx] = filled
-                        detail_left -= 1
-                    except Exception as exc:
-                        print(f"Vegas detalhe {lot.external_id}: {exc}")
+                auction.lots, used = await fill_item_details_async(
+                    auction.lots,
+                    client=client,
+                    base_url=self.base_url,
+                    cap=detail_left,
+                )
+                detail_left -= used
 
         return auctions
 

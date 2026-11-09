@@ -47,12 +47,12 @@ def pages_to_jpegs(data: bytes, max_pages: int = MAX_PAGES) -> list[bytes]:
     return out
 
 
-def ocr_pdf(data: bytes, fetch: Optional[Callable] = None) -> str:
+def ocr_pdf(data: bytes, fetch: Optional[Callable] = None, max_pages: int = MAX_PAGES) -> str:
     """Transcreve páginas de PDF escaneado. Não inventa se a API falhar."""
     key = os.getenv("OPENROUTER_API_KEY", "").strip()
     if fetch is None and not key:
         return ""
-    images = pages_to_jpegs(data)
+    images = pages_to_jpegs(data, max_pages=max_pages)
     if not images:
         return ""
     model = (

@@ -285,6 +285,71 @@ def gliner_configured() -> bool:
     return bool(os.getenv("GLINER_URL", "").strip() and os.getenv("GLINER_API_TOKEN", "").strip())
 
 
+def _parse_gliner_entities(payload: object) -> dict[str, list[str]]:
+    if not isinstance(payload, dict):
+        return {}
+    if payload.get("result") or payload.get("entities"):
+        result = payload.get("result") or {}
+        entities = result.get("entities") if isinstance(result, dict) else result
+        if entities is None:
+            entities = payload.get("entities")
+    else:
+        entities = payload
+    out: dict[str, list[str]] = {}
+    if not isinstance(entities, dict):
+        return out
+    for key, values in entities.items():
+        texts: list[str] = []
+        if isinstance(values, str):
+            texts.append(values)
+        elif isinstance(values, list):
+            for item in values:
+                if isinstance(item, str):
+                    texts.append(item)
+                elif isinstance(item, dict):
+                    span = item.get("text") or item.get("span") or item.get("value")
+                    if span:
+                        texts.append(str(span))
+        if texts:
+            out[str(key)] = texts
+    return out
+
+
+def gliner_entities(
+    text: str,
+    *,
+    labels: dict[str, str] | None = None,
+    fetch=None,
+) -> dict[str, list[str]]:
+    labels = labels or GLINER_LABELS
+    if not (text or "").strip():
+        return {}
+    if fetch is not None:
+        try:
+            return _parse_gliner_entities(fetch(text, labels))
+        except Exception:
+            return {}
+    url = os.getenv("GLINER_URL", "").rstrip("/")
+    token = os.getenv("GLINER_API_TOKEN", "").strip()
+    if not url or not token:
+        return {}
+    try:
+        r = httpx.post(
+            f"{url}/v1/extract/entities",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"text": text, "labels": labels, "include_spans": False},
+            timeout=20.0,
+        )
+        r.raise_for_status()
+        return _parse_gliner_entities(r.json())
+    except Exception:
+        return {}
+
+
+def _gliner_entities(text: str) -> dict[str, list[str]]:
+    return gliner_entities(text)
+
+
 def openrouter_configured() -> bool:
     return bool(os.getenv("OPENROUTER_API_KEY", "").strip())
 
@@ -339,41 +404,6 @@ def enrich_extra(
     elif not out.get("extract"):
         out["extract"] = "regex"
     return {k: v for k, v in out.items() if v}
-
-
-def _gliner_entities(text: str) -> dict[str, list[str]]:
-    url = os.getenv("GLINER_URL", "").rstrip("/")
-    token = os.getenv("GLINER_API_TOKEN", "").strip()
-    if not url or not token or not text.strip():
-        return {}
-    try:
-        r = httpx.post(
-            f"{url}/v1/extract/entities",
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            json={"text": text, "labels": GLINER_LABELS, "include_spans": False},
-            timeout=20.0,
-        )
-        r.raise_for_status()
-        payload = r.json()
-        result = payload.get("result") or {}
-        entities = result.get("entities") if isinstance(result, dict) else result
-        out: dict[str, list[str]] = {}
-        if isinstance(entities, dict):
-            for key, values in entities.items():
-                texts: list[str] = []
-                if isinstance(values, list):
-                    for item in values:
-                        if isinstance(item, str):
-                            texts.append(item)
-                        elif isinstance(item, dict):
-                            span = item.get("text") or item.get("span") or item.get("value")
-                            if span:
-                                texts.append(str(span))
-                if texts:
-                    out[str(key)] = texts
-        return out
-    except Exception:
-        return {}
 
 
 def _mistral_fields(blob: str) -> dict[str, str]:

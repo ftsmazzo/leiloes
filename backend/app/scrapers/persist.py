@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.schemas import AuctionModel, LotModel
 from app.scrapers.base import ScrapedAuction, ScrapedLot
 from app.scrapers.extract import extra_json
-from app.scoring import compute_score
+from app.scoring import apply_score, compute_score
 
 
 KEEP_RAW_KEYS = (
@@ -36,6 +36,28 @@ KEEP_RAW_KEYS = (
     "processo_cnj",
     "nao_entrar",
     "pracas",
+    "score",
+    "score_tem_comparacao_preco",
+    "score_motivos",
+    "veredito",
+    "veredito_titulo",
+    "veredito_corpo",
+    "regime",
+    "cobertura",
+    "ledger",
+    "infosimples",
+    "infosimples_consultado_para",
+    "infosimples_foro",
+    "infosimples_vara",
+    "infosimples_valor_causa",
+    "infosimples_peticoes_recentes",
+    "trechos",
+    "valor_m2_regiao",
+    "valor_m2_fonte",
+    "valor_m2_n",
+    "valor_mercado_estimado",
+    "apify",
+    "apify_consultado_para",
 )
 
 
@@ -94,10 +116,16 @@ def _refresh_score_if_avaliado(lot: LotModel) -> None:
         else None,
         tipo=extra.get("tipo") if isinstance(extra.get("tipo"), str) else None,
         riscos=extra.get("riscos") if isinstance(extra.get("riscos"), dict) else None,
+        origem=extra.get("origem") if isinstance(extra.get("origem"), str) else None,
+        pracas=extra.get("pracas") if isinstance(extra.get("pracas"), list) else None,
+        trechos=extra.get("trechos") if isinstance(extra.get("trechos"), list) else None,
+        peticoes=extra.get("infosimples_peticoes_recentes")
+        if isinstance(extra.get("infosimples_peticoes_recentes"), list)
+        else None,
+        valor_m2_fonte=extra.get("valor_m2_fonte") if isinstance(extra.get("valor_m2_fonte"), str) else None,
+        avaliado=True,
     )
-    extra["score"] = info["score"]
-    extra["score_tem_comparacao_preco"] = info["tem_comparacao_preco"]
-    extra["score_motivos"] = info["motivos"]
+    apply_score(extra, info)
     lot.raw_data = extra_json(extra)
 
 

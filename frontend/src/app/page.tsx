@@ -1,10 +1,18 @@
 'use client';
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { Lot, LotCard } from '../components/LotCard';
+import { Lot } from '../components/LotCard';
+import { LotRow } from '../components/LotRow';
 import { API_URL } from '../lib/api';
 
 type Source = { id: string; label: string };
+
+type Leitura = {
+  dias: number;
+  com_peca: number;
+  sem_peca: number;
+  ocr_vazio: number;
+};
 
 type Facets = {
   total_lots: number;
@@ -29,6 +37,17 @@ type ScrapeStatus = {
   current_source: string | null;
 };
 
+const TIPOS = [
+  { id: '', label: 'Todos' },
+  { id: 'imovel', label: 'Imóvel' },
+  { id: 'casa', label: 'Casa' },
+  { id: 'apartamento', label: 'Apartamento' },
+  { id: 'terreno', label: 'Terreno' },
+  { id: 'galpao', label: 'Galpão' },
+  { id: 'chacara', label: 'Chácara' },
+  { id: 'sala', label: 'Sala' },
+];
+
 const SCRAPE_POLL_MS = 1500;
 const SCRAPE_MAX_WAIT_MS = 5 * 60_000;
 
@@ -40,9 +59,10 @@ export default function Home() {
   const [teto, setTeto] = useState('');
   const [q, setQ] = useState('');
   const [applied, setApplied] = useState({ cidade: '', tipo: 'imovel', teto: '', q: '' });
-  const [sortByScore, setSortByScore] = useState(false);
+  const [sortByScore, setSortByScore] = useState(true);
   const [lots, setLots] = useState<Lot[]>([]);
   const [facets, setFacets] = useState<Facets | null>(null);
+  const [leitura, setLeitura] = useState<Leitura | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
@@ -52,8 +72,8 @@ export default function Home() {
   const [scrapeSource, setScrapeSource] = useState<string | null>(null);
   const cancelledRef = useRef(false);
 
-  const tabs: Source[] = [{ id: '', label: 'Todas' }, ...sources];
   const cityOptions = useMemo(() => facets?.cidades ?? [], [facets]);
+  const filterCount = [source, applied.cidade, applied.tipo, applied.teto, applied.q].filter(Boolean).length;
 
   useEffect(
     () => () => {
@@ -89,11 +109,14 @@ export default function Home() {
     Promise.all([
       fetch(`${API_URL}/api/lots?${params}`, { signal: ac.signal }),
       fetch(`${API_URL}/api/facets`, { signal: ac.signal }),
+      fetch(`${API_URL}/api/stats`, { signal: ac.signal }),
     ])
-      .then(async ([lotsRes, facetsRes]) => {
+      .then(async ([lotsRes, facetsRes, statsRes]) => {
         if (!lotsRes.ok) throw new Error('Falha ao carregar lotes');
         setLots(await lotsRes.json());
         setFacets(facetsRes.ok ? await facetsRes.json() : null);
+        const stats = statsRes.ok ? await statsRes.json() : null;
+        setLeitura(stats?.leitura ?? null);
         setError(null);
       })
       .catch((e) => {
@@ -111,6 +134,16 @@ export default function Home() {
   const onSearch = (e: FormEvent) => {
     e.preventDefault();
     setApplied({ cidade: cidade.trim(), tipo, teto: teto.trim(), q: q.trim() });
+  };
+
+  const limpar = () => {
+    setSource('');
+    setCidade('');
+    setTipo('');
+    setTeto('');
+    setQ('');
+    setSortByScore(true);
+    setApplied({ cidade: '', tipo: '', teto: '', q: '' });
   };
 
   const pollScrapeStatus = async (deadline: number) => {
@@ -165,147 +198,189 @@ export default function Home() {
     }
   };
 
-  const sourceCounts = Object.entries(facets?.by_source ?? {});
-
   return (
-    <div aria-busy={loading}>
-      <section className="kpis" aria-label="Resumo do catálogo">
-        {sourceCounts.map(([name, count]) => (
-          <div className="kpi" key={name}>
-            <span>{name}</span>
-            <strong>{count}</strong>
-          </div>
-        ))}
-        <div className="kpi">
-          <span>Com cidade</span>
-          <strong>{facets ? `${facets.with_cidade}/${facets.total_lots}` : '—'}</strong>
-        </div>
-        <div className="kpi">
-          <span>Extração</span>
-          <strong>
-            {facets?.extract?.gliner ? 'GLiNER' : 'regex'}
-            {facets?.extract?.openrouter ? ' + Mistral' : ''}
-          </strong>
-        </div>
-      </section>
-
-      <div className="tabs" role="group" aria-label="Base de leilão">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id || 'all'}
-            type="button"
-            className="tab"
-            aria-selected={source === tab.id}
-            onClick={() => setSource(tab.id)}
-          >
-            {tab.label}
-            {tab.id && facets?.by_source?.[tab.id] != null ? ` (${facets.by_source[tab.id]})` : ''}
-          </button>
-        ))}
-      </div>
-
-      <form className="toolbar" onSubmit={onSearch}>
-        <label className="field">
-          Busca
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="rua, bairro, matrícula…" />
-        </label>
-        <label className="field">
-          Cidade
-          <input
-            value={cidade}
-            onChange={(e) => setCidade(e.target.value)}
-            placeholder="Ribeirão Preto"
-            list="cidades"
-          />
-          <datalist id="cidades">
-            {cityOptions.map(([name]) => (
-              <option key={name} value={name} />
-            ))}
-          </datalist>
-        </label>
-        <label className="field">
-          Tipo
-          <select value={tipo} onChange={(e) => setTipo(e.target.value)}>
-            <option value="">Todos</option>
-            <option value="imovel">Imóvel (casa/apto/terreno)</option>
-            <option value="casa">Casa</option>
-            <option value="apartamento">Apartamento</option>
-            <option value="terreno">Terreno</option>
-            <option value="galpao">Galpão</option>
-            <option value="chacara">Chácara</option>
-            <option value="sala">Sala comercial</option>
-            <option value="veiculo">Veículo</option>
-          </select>
-        </label>
-        <label className="field">
-          Teto (R$)
-          <input value={teto} onChange={(e) => setTeto(e.target.value)} inputMode="numeric" placeholder="300000" />
-        </label>
-        <label className="field field-checkbox">
-          <input type="checkbox" checked={sortByScore} onChange={(e) => setSortByScore(e.target.checked)} />
-          Ordenar por score
-        </label>
-        <button className="btn" type="submit">
-          Buscar
-        </button>
-        <button className="btn btn-secondary" type="button" onClick={runScrape} disabled={scrapeLoading} aria-busy={scrapeLoading}>
-          {scrapeLoading ? `Atualizando${scrapeSource ? ` (${scrapeSource})` : '…'}` : 'Atualizar catálogo'}
-        </button>
-      </form>
-
-      {scrapeError && <p className="msg msg-error">{scrapeError}</p>}
-      {scrapeResult && (
-        <p className="msg msg-ok">
-          Catálogo atualizado: <strong>{scrapeResult.total_lots}</strong> lote(s)
-          {scrapeResult.by_source &&
-            Object.entries(scrapeResult.by_source).map(([name, v]) => (
-              <span key={name}>
-                {' '}
-                · {name}: {v.lots}
-              </span>
-            ))}
-          {scrapeResult.errors && scrapeResult.errors.length > 0 && (
-            <span> · falha: {scrapeResult.errors.map((e) => e.source).join(', ')}</span>
-          )}
-        </p>
-      )}
-
-      {error && <p className="msg msg-error">{error}</p>}
-
-      {loading && (
-        <div>
-          <p className="sr-only" aria-live="polite">
-            Carregando lotes
-          </p>
-          <div className="lot-grid">
-            <div className="lot-card skel" />
-            <div className="lot-card skel" />
-            <div className="lot-card skel" />
-            <div className="lot-card skel" />
-            <div className="lot-card skel" />
-            <div className="lot-card skel" />
-          </div>
-        </div>
-      )}
-
-      {!loading && !error && lots.length === 0 && (
-        <p className="meta">
-          Nenhum lote com esses filtros. Clique em <strong>Atualizar catálogo</strong> para puxar Calil
-          (calilleiloes.com.br), Vegas, Zuk, Mega, Grupo Lance e TRT5, ou limpe cidade/tipo.
-        </p>
-      )}
-
-      {!loading && !error && lots.length > 0 && (
-        <div className="lot-grid">
-          {lots.map((lot) => (
-            <LotCard
-              key={lot.id}
-              lot={lot}
-              onUpdated={(updated) => setLots((cur) => cur.map((item) => (item.id === updated.id ? updated : item)))}
+    <div className="grade" aria-busy={loading}>
+      <details className="painel" open>
+        <summary>
+          Filtros {filterCount ? <span>({filterCount})</span> : null}
+        </summary>
+        <form id="form-filtros" onSubmit={onSearch} autoComplete="off">
+          <div className="campo">
+            <label className="rot" htmlFor="q">
+              Buscar
+            </label>
+            <input
+              id="q"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="rua, bairro, matrícula…"
             />
-          ))}
+          </div>
+          <div className="campo">
+            <label className="rot" htmlFor="cidade">
+              Cidade
+            </label>
+            <input
+              id="cidade"
+              value={cidade}
+              onChange={(e) => setCidade(e.target.value)}
+              placeholder="Ribeirão Preto"
+              list="cidades"
+            />
+            <datalist id="cidades">
+              {cityOptions.map(([name]) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+          </div>
+          <fieldset>
+            <legend>Tipo de imóvel</legend>
+            <div className="chips" role="radiogroup" aria-label="Tipo">
+              {TIPOS.map((t) => (
+                <label className="chip" key={t.id || 'all-tipo'}>
+                  <input
+                    type="radio"
+                    name="tipo"
+                    checked={tipo === t.id}
+                    onChange={() => setTipo(t.id)}
+                  />
+                  <span>{t.label}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Fonte</legend>
+            <div className="chips" role="radiogroup" aria-label="Fonte">
+              <label className="chip">
+                <input type="radio" name="fonte" checked={source === ''} onChange={() => setSource('')} />
+                <span>Todas</span>
+              </label>
+              {sources.map((s) => (
+                <label className="chip" key={s.id}>
+                  <input
+                    type="radio"
+                    name="fonte"
+                    checked={source === s.id}
+                    onChange={() => setSource(s.id)}
+                  />
+                  <span>
+                    {s.label}
+                    {facets?.by_source?.[s.id] != null ? ` (${facets.by_source[s.id]})` : ''}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <div className="campo">
+            <label className="rot" htmlFor="teto">
+              Lance até (R$)
+            </label>
+            <input
+              id="teto"
+              value={teto}
+              onChange={(e) => setTeto(e.target.value)}
+              inputMode="numeric"
+              placeholder="300000"
+            />
+          </div>
+          <label className="marca">
+            <input
+              type="checkbox"
+              checked={sortByScore}
+              onChange={(e) => setSortByScore(e.target.checked)}
+            />
+            Ordenar por score
+          </label>
+          <button className="btn" type="submit">
+            Filtrar
+          </button>
+          <button className="btn sec" type="button" onClick={limpar}>
+            Limpar filtros
+          </button>
+          <button
+            className="btn sec"
+            type="button"
+            onClick={runScrape}
+            disabled={scrapeLoading}
+            aria-busy={scrapeLoading}
+          >
+            {scrapeLoading ? `Atualizando${scrapeSource ? ` (${scrapeSource})` : '…'}` : 'Atualizar catálogo'}
+          </button>
+          {leitura ? (
+            <p className="exemplo">
+              Leitura · 7 dias: {leitura.com_peca} com peça · {leitura.sem_peca} sem peça · {leitura.ocr_vazio} OCR
+              vazio
+            </p>
+          ) : null}
+        </form>
+      </details>
+
+      <div>
+        <div className="cab-lista">
+          <div>
+            <h1 aria-live="polite">
+              {loading ? 'Carregando…' : `${lots.length} oportunidade${lots.length === 1 ? '' : 's'}`}
+            </h1>
+            <p>
+              Filtre e escolha um imóvel. A análise completa abre no dossiê.
+              {facets ? ` · ${facets.with_cidade}/${facets.total_lots} com cidade` : ''}
+            </p>
+          </div>
         </div>
-      )}
+
+        {scrapeError ? <p className="msg msg-error">{scrapeError}</p> : null}
+        {scrapeResult ? (
+          <p className="msg msg-ok">
+            Catálogo atualizado: <strong>{scrapeResult.total_lots}</strong> lote(s)
+            {scrapeResult.errors && scrapeResult.errors.length > 0
+              ? ` · falha: ${scrapeResult.errors.map((e) => e.source).join(', ')}`
+              : ''}
+          </p>
+        ) : null}
+        {error ? <p className="msg msg-error">{error}</p> : null}
+
+        {loading ? (
+          <div className="lista" aria-busy="true">
+            <p className="sr-only">Carregando lotes</p>
+            <div className="lote skel" />
+            <div className="lote skel" />
+            <div className="lote skel" />
+          </div>
+        ) : null}
+
+        {!loading && !error && lots.length === 0 ? (
+          <div className="vazio">
+            <p>Nenhum lote com esses filtros.</p>
+            <button className="btn" type="button" onClick={runScrape} disabled={scrapeLoading}>
+              Atualizar catálogo
+            </button>
+          </div>
+        ) : null}
+
+        {!loading && !error && lots.length > 0 ? (
+          <div className="lista">
+            {lots.map((lot) => (
+              <LotRow key={lot.id} lot={lot} />
+            ))}
+          </div>
+        ) : null}
+
+        <details className="como">
+          <summary>Como usar</summary>
+          <ul>
+            <li>
+              <b>Filtrar.</b> Busca, cidade, tipo, fonte e teto de lance usam os lotes já gravados no banco.
+            </li>
+            <li>
+              <b>Analisar.</b> Abre o dossiê do imóvel. A avaliação lê a página pública e os PDFs públicos.
+            </li>
+            <li>
+              <b>Sem norte.</b> Sem matrícula, laudo ou penhora útil, o sistema não trata o lote como oportunidade.
+            </li>
+          </ul>
+        </details>
+      </div>
     </div>
   );
 }

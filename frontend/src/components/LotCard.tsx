@@ -1,6 +1,7 @@
 'use client';
 
 import { Fragment, useState } from 'react';
+import Link from 'next/link';
 import { API_URL, formatMoney, httpUrl } from '../lib/api';
 
 export type LotDoc = {
@@ -10,6 +11,8 @@ export type LotDoc = {
   scanned?: boolean;
   anexo?: boolean;
   ocr?: boolean;
+  chars?: number;
+  paginas?: number;
 };
 
 export type LotPraca = {
@@ -18,6 +21,27 @@ export type LotPraca = {
   fim?: string;
   valor?: number;
   ativa?: boolean;
+};
+
+export type LotTrecho = {
+  tipo: string;
+  texto: string;
+  origem: string;
+  peca?: string;
+  ocr?: boolean;
+  pagina?: number | string;
+};
+
+export type LedgerItem = {
+  id: string;
+  lado: 'vantagem' | 'risco' | 'veto' | 'incerteza';
+  titulo: string;
+  frase: string;
+  fonte?: string;
+  metrica?: string;
+  trecho?: string;
+  pontos?: number;
+  confianca?: string;
 };
 
 export type Lot = {
@@ -36,10 +60,19 @@ export type Lot = {
   area: string | null;
   foto: string | null;
   valor_m2_regiao: number | null;
+  valor_m2_fonte?: string | null;
+  valor_m2_n?: number | null;
+  apify?: string | null;
   valor_mercado_estimado: number | null;
   score: number | null;
   score_tem_comparacao_preco: boolean | null;
   score_motivos: string[];
+  veredito?: 'nao_aprofundar' | 'falta_peca' | 'aprofundar' | null;
+  veredito_titulo?: string | null;
+  veredito_corpo?: string | null;
+  regime?: string | null;
+  cobertura?: number | null;
+  ledger?: LedgerItem[];
   parecer?: string | null;
   ocupacao?: string | null;
   avaliado_em?: string | null;
@@ -60,7 +93,14 @@ export type Lot = {
     meacao_trecho?: string;
     nao_entrar?: boolean;
     processo_cnj?: string;
+    docs_limitados?: boolean;
   } | null;
+  infosimples?: string | null;
+  infosimples_foro?: string | null;
+  infosimples_vara?: string | null;
+  infosimples_valor_causa?: number | null;
+  infosimples_peticoes_recentes?: { data?: string; tipo?: string }[];
+  trechos?: LotTrecho[];
   pracas?: LotPraca[];
   current_bid: number | null;
   minimum_bid: number | null;
@@ -111,28 +151,65 @@ function formatLaudoDate(iso: string): string {
   const when = new Date(stamp);
   const years = Math.max(0, Math.round((Date.now() - stamp) / (365.25 * 24 * 3600 * 1000)));
   const month = String(when.getMonth() + 1).padStart(2, '0');
-  const label = years === 1 ? '1 ano' : `${years} anos`;
-  const opp = years >= 1 ? ' · oportunidade' : '';
-  return `${month}/${when.getFullYear()} · ${label}${opp}`;
+  if (years < 1) return `${month}/${when.getFullYear()}`;
+  const label = years === 1 ? 'laudo de 1 ano' : `laudo de ${years} anos`;
+  return `${month}/${when.getFullYear()} · ${label}`;
+}
+
+function laudoIdade(iso?: string | null): string | null {
+  if (!iso) return null;
+  const stamp = Date.parse(`${iso.slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(stamp)) return null;
+  const years = Math.floor((Date.now() - stamp) / (365.25 * 24 * 3600 * 1000));
+  if (years < 1) return null;
+  return years === 1 ? 'laudo de 1 ano' : `laudo de ${years} anos`;
+}
+
+const RE_OCUP_HEDGE = /caso\s+(?:o\s+)?im[oó]vel\s+esteja/i;
+const RE_MEACAO_PRACA = /50\s*%\s+da\s+avalia/i;
+const RE_MEACAO_PALAVRA = /mea[cç][aã]o|metade\s+(?:do\s+im[oó]vel|da\s+propriedade)/i;
+
+function cardTrecho(lot: Lot): string | undefined {
+  const escolhido = (lot.trechos || []).find((item) => {
+    const txt = item.texto || '';
+    if (!txt) return false;
+    if (item.tipo === 'ocupacao' && RE_OCUP_HEDGE.test(txt)) return false;
+    if (item.tipo === 'meacao' && RE_MEACAO_PRACA.test(txt) && !RE_MEACAO_PALAVRA.test(txt)) return false;
+    return true;
+  });
+  if (escolhido?.texto) return escolhido.texto;
+  const meacao = lot.riscos?.meacao_trecho;
+  if (meacao && !(RE_MEACAO_PRACA.test(meacao) && !RE_MEACAO_PALAVRA.test(meacao))) return meacao;
+  return undefined;
 }
 
 export type ScoreTier = 'alto' | 'baixo' | 'neutro' | 'sem-preco';
 
 export function scoreTier(lot: Lot): ScoreTier {
-  if (lot.nao_entrar || lot.riscos?.citacao === 'nao_citado' || lot.riscos?.citacao === 'pendente') {
+  if (lot.veredito === 'nao_aprofundar' || lot.nao_entrar || lot.riscos?.citacao === 'nao_citado' || lot.riscos?.citacao === 'pendente') {
     return 'baixo';
   }
   if (lot.score == null) return 'neutro';
-  if (!lot.score_tem_comparacao_preco) return 'sem-preco';
+  if ((lot.cobertura != null && lot.cobertura < 0.5) || !lot.score_tem_comparacao_preco) return 'sem-preco';
   if (lot.score >= 65) return 'alto';
   if (lot.score <= 35) return 'baixo';
   return 'neutro';
+}
+
+export function ledgerOf(lot: Lot): LedgerItem[] {
+  return Array.isArray(lot.ledger) ? lot.ledger : [];
+}
+
+export function pickLedger(lot: Lot, lado: LedgerItem['lado']): LedgerItem | undefined {
+  return ledgerOf(lot).find((i) => i.lado === lado);
 }
 
 export function LotCard({ lot, onUpdated }: { lot: Lot; onUpdated?: (lot: Lot) => void }) {
   const site = httpUrl(lot.url);
   const bid = lot.current_bid ?? lot.minimum_bid;
   const headline = lotHeadline(lot);
+  const semNorte = !lot.avaliado_em || lot.veredito_titulo === 'Sem norte' || Boolean(lot.riscos?.docs_limitados);
+  const idadeLaudo = lot.avaliacao_fonte === 'venal_imovel' ? null : laudoIdade(lot.avaliacao_data);
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [anexos, setAnexos] = useState<File[]>([]);
@@ -169,30 +246,62 @@ export function LotCard({ lot, onUpdated }: { lot: Lot; onUpdated?: (lot: Lot) =
         <div className="lot-card-head">
           <span className="source-tag">{lot.source}</span>
           {lot.status === 'aguardando' ? <span className="status-tag">Ainda não abriu</span> : null}
-          {lot.nao_entrar || lot.riscos?.citacao === 'nao_citado' || lot.riscos?.citacao === 'pendente' ? (
-            <span className="risk-tag">Não citado — não entrar</span>
+          {lot.veredito || lot.nao_entrar ? (
+            <span
+              className="risk-tag"
+              data-veredito={lot.veredito || (lot.nao_entrar ? 'nao_aprofundar' : undefined)}
+            >
+              {lot.veredito_titulo
+                || (lot.veredito === 'aprofundar'
+                  ? 'Aprofundar'
+                  : lot.veredito === 'falta_peca'
+                    ? 'Falta peça'
+                    : 'Não aprofundar')}
+            </span>
           ) : null}
-          {lot.riscos?.usufruto ? <span className="risk-tag">Usufruto</span> : null}
-          {lot.riscos?.meacao ? <span className="risk-tag">Meação/fração</span> : null}
-          {lot.score != null ? (
+          {!semNorte && lot.score != null && (lot.cobertura == null || lot.cobertura >= 0.5) ? (
             <span
               className="score-badge"
               data-tier={scoreTier(lot)}
-              title={lot.score_tem_comparacao_preco ? 'Score de oportunidade' : 'Score parcial — sem referência de preço pra comparar'}
+              title="Score de indício — não é decisão de lance"
             >
               {lot.score}
             </span>
+          ) : !semNorte && lot.score != null ? (
+            <span className="score-badge" data-tier="sem-preco" title="Score parcial — cobertura baixa">
+              parcial
+            </span>
           ) : null}
         </div>
-        <h2>{headline}</h2>
-        {lot.score_motivos.length > 0 ? (
-          <ul className="lot-motivos">
-            {lot.score_motivos.slice(0, 5).map((motivo) => (
-              <li key={motivo}>{motivo}</li>
-            ))}
-          </ul>
-        ) : null}
-        {lot.riscos?.meacao_trecho ? <p className="lot-trecho">Trecho: «{lot.riscos.meacao_trecho}»</p> : null}
+        {semNorte && lot.veredito_corpo ? <p className="sem-norte">{lot.veredito_corpo}</p> : null}
+        <h2>
+          <Link href={`/lote/${lot.id}`}>{headline}</Link>
+        </h2>
+        {(() => {
+          const preco = ledgerOf(lot).find((i) => i.id === 'V1');
+          const vantagem = preco?.lado === 'vantagem' ? preco : pickLedger(lot, 'vantagem');
+          const risco =
+            pickLedger(lot, 'veto')
+            || (preco?.lado === 'risco' ? preco : pickLedger(lot, 'risco'));
+          if (!vantagem && !risco) return null;
+          return (
+            <ul className="lot-ledger">
+              {vantagem ? (
+                <li data-lado="vantagem">
+                  {vantagem.metrica ? `${vantagem.metrica} · ` : ''}
+                  {vantagem.titulo}
+                </li>
+              ) : null}
+              {risco ? (
+                <li data-lado="risco">
+                  {risco.metrica ? `${risco.metrica} · ` : ''}
+                  {risco.titulo}
+                </li>
+              ) : null}
+            </ul>
+          );
+        })()}
+        {cardTrecho(lot) ? <p className="lot-trecho">«{cardTrecho(lot)}»</p> : null}
         <dl className="lot-dl">
           {lot.processo_cnj ? (
             <>
@@ -227,7 +336,10 @@ export function LotCard({ lot, onUpdated }: { lot: Lot; onUpdated?: (lot: Lot) =
           {lot.reference_value != null ? (
             <>
               <dt>{lot.avaliacao_fonte === 'venal_imovel' ? 'Valor venal (IPTU)' : 'Avaliação'}</dt>
-              <dd>{formatMoney(lot.reference_value)}</dd>
+              <dd>
+                {formatMoney(lot.reference_value)}
+                {idadeLaudo ? ` · ${idadeLaudo}` : ''}
+              </dd>
             </>
           ) : null}
           {(lot.pracas || []).map((praca) => {
@@ -253,7 +365,17 @@ export function LotCard({ lot, onUpdated }: { lot: Lot; onUpdated?: (lot: Lot) =
           {lot.valor_mercado_estimado != null ? (
             <>
               <dt>Ref. mercado</dt>
-              <dd title={lot.valor_m2_regiao != null ? `${formatMoney(lot.valor_m2_regiao)}/m² na região` : undefined}>
+              <dd
+                title={
+                  lot.valor_m2_regiao != null
+                    ? `${formatMoney(lot.valor_m2_regiao)}/m² · ${
+                        lot.valor_m2_fonte === 'apify'
+                          ? `${lot.valor_m2_n || ''} anúncios Zap/VivaReal`.trim()
+                          : 'FipeZap'
+                      }`
+                    : undefined
+                }
+              >
                 {formatMoney(lot.valor_mercado_estimado)}
               </dd>
             </>
@@ -270,7 +392,7 @@ export function LotCard({ lot, onUpdated }: { lot: Lot; onUpdated?: (lot: Lot) =
               <dd>{lot.area}</dd>
             </>
           ) : null}
-          {lot.ocupacao ? (
+          {lot.ocupacao && (lot.trechos || []).some((t) => t.tipo === 'ocupacao') ? (
             <>
               <dt>Ocupação</dt>
               <dd>{lot.ocupacao}</dd>
@@ -279,13 +401,13 @@ export function LotCard({ lot, onUpdated }: { lot: Lot; onUpdated?: (lot: Lot) =
           {typeof lot.dividas?.condominio === 'number' ? (
             <>
               <dt>Condomínio</dt>
-              <dd>{formatMoney(lot.dividas.condominio as number)} · não se abate</dd>
+              <dd>{formatMoney(lot.dividas.condominio as number)} · propter rem</dd>
             </>
           ) : null}
           {typeof lot.dividas?.iptu === 'number' ? (
             <>
               <dt>IPTU</dt>
-              <dd>{formatMoney(lot.dividas.iptu as number)} · em geral abatido</dd>
+              <dd>{formatMoney(lot.dividas.iptu as number)} · conferir regime</dd>
             </>
           ) : null}
         </dl>
@@ -334,6 +456,9 @@ export function LotCard({ lot, onUpdated }: { lot: Lot; onUpdated?: (lot: Lot) =
               Abrir no site
             </a>
           ) : null}
+          <Link className="lot-card-link" href={`/lote/${lot.id}`}>
+            Analisar
+          </Link>
         </div>
         {erro ? <p className="msg msg-error">{erro}</p> : null}
       </div>
