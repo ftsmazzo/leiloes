@@ -9,8 +9,34 @@ from app.models.schemas import LotModel
 from app.search import cidade_of, endereco_of, foto_of, raw_dict, tipo_of
 from app.scrapers.extract import format_card, tipo_from_text
 from app.scrapers.listing import merge_pracas
+from app.scrapers.market_price import estimate_market_value
 from app.ledger import SEM_NORTE
 from app.scoring import compute_score
+
+
+def _mercado_do_card(extra: dict[str, Any], tipo: str | None) -> dict[str, Any]:
+    """FipeZap ao vivo a partir da área do card — corrige raw_data com área velha.
+
+    Não mexe em estimativa Apify (fonte própria / anúncios).
+    """
+    if extra.get("valor_m2_fonte") == "apify":
+        return {
+            "valor_m2_regiao": extra.get("valor_m2_regiao"),
+            "valor_m2_fonte": "apify",
+            "valor_mercado_estimado": extra.get("valor_mercado_estimado"),
+        }
+    mkt = estimate_market_value(
+        extra.get("cidade") if isinstance(extra.get("cidade"), str) else None,
+        extra.get("area") if isinstance(extra.get("area"), (str, int, float)) else None,
+        tipo=tipo if isinstance(tipo, str) else None,
+    )
+    if mkt:
+        return mkt
+    return {
+        "valor_m2_regiao": None,
+        "valor_m2_fonte": None,
+        "valor_mercado_estimado": None,
+    }
 
 
 def _ocupacao_do_ledger(ledger: object, stored: str | None) -> str | None:
@@ -145,6 +171,7 @@ def lot_to_out(lot: LotModel, source: str) -> LotOut:
         )
         if rebuilt:
             parecer = rebuilt
+    mercado = _mercado_do_card(extra, tipo if isinstance(tipo, str) else None)
     return LotOut(
         id=lot.id,
         auction_id=lot.auction_id,
@@ -161,11 +188,11 @@ def lot_to_out(lot: LotModel, source: str) -> LotOut:
         matricula=extra.get("matricula"),
         area=extra.get("area"),
         foto=foto_of(lot) or (extra.get("foto") if isinstance(extra.get("foto"), str) and extra["foto"].startswith("http") and "facebook.com/tr" not in extra["foto"] else None),
-        valor_m2_regiao=extra.get("valor_m2_regiao"),
-        valor_m2_fonte=extra.get("valor_m2_fonte") if extra.get("valor_m2_fonte") in ("fipezap", "apify") else None,
+        valor_m2_regiao=mercado.get("valor_m2_regiao"),
+        valor_m2_fonte=mercado.get("valor_m2_fonte") if mercado.get("valor_m2_fonte") in ("fipezap", "apify") else None,
         valor_m2_n=extra.get("valor_m2_n") if isinstance(extra.get("valor_m2_n"), int) else None,
         apify=extra.get("apify") if extra.get("apify") in ("ok", "poucos", "indisponivel", "sem_token") else None,
-        valor_mercado_estimado=extra.get("valor_mercado_estimado"),
+        valor_mercado_estimado=mercado.get("valor_mercado_estimado"),
         score=live.get("score", raw.get("score")),
         score_tem_comparacao_preco=live.get("score_tem_comparacao_preco", raw.get("score_tem_comparacao_preco")),
         score_motivos=live.get("score_motivos") or raw.get("score_motivos") or [],

@@ -66,6 +66,16 @@ def test_format_card_clips_legal_dump():
     assert len(card.get("matricula") or "") <= 80
 
 
+def test_format_card_reparseia_area_errada_do_raw():
+    """Área absurda gravada não vence o texto «76,7508 m²» do anúncio."""
+    card = format_card(
+        "Apartamento Lagoinha, Rib. Preto/SP",
+        "Descrição: área total de 76,7508 m², sendo 66,1738 m² de área exclusiva",
+        {"cidade": "Ribeirão Preto", "tipo": "apartamento", "area": "6908 m²"},
+    )
+    assert card.get("area") == "76,7508 m²"
+
+
 if __name__ == "__main__":
     test_tipo_from_title()
     test_cidade_na_cidade_de()
@@ -73,4 +83,5 @@ if __name__ == "__main__":
     test_enrich_regex_without_ai()
     test_format_card_strips_legal_title()
     test_format_card_clips_legal_dump()
+    test_format_card_reparseia_area_errada_do_raw()
     print("ok")
