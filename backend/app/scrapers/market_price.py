@@ -90,6 +90,15 @@ _ACCENT = str.maketrans(
 
 _RE_AREA_NUM = re.compile(r"([\d.,]+)")
 
+# Teto pra não multiplicar FipeZap por área de terreno/condomínio lida errada.
+_MAX_M2_RESIDENCIAL = {
+    "apartamento": 400.0,
+    "sala": 400.0,
+    "casa": 800.0,
+    "chacara": 5000.0,
+    "imovel": 800.0,
+}
+
 
 def _fold(text: str) -> str:
     return text.translate(_ACCENT).strip().lower()
@@ -102,6 +111,25 @@ def price_per_m2(cidade: Optional[str]) -> Optional[float]:
     return PRICE_PER_M2_BY_CIDADE.get(_fold(cidade))
 
 
+def _parse_area_number(raw: str) -> Optional[float]:
+    """'76,7508' → 76.7508; '1.234,56' → 1234.56; '1.234' → 1234; '59' → 59."""
+    text = (raw or "").strip()
+    if not text:
+        return None
+    if "," in text:
+        text = text.replace(".", "").replace(",", ".")
+    elif text.count(".") > 1:
+        text = text.replace(".", "")
+    elif re.fullmatch(r"\d{1,3}\.\d{3}", text):
+        # 6.908 em texto BR quase sempre é milhar (6908), não 6,908 m².
+        text = text.replace(".", "")
+    try:
+        value = float(text)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
 def _area_m2(area: Optional[Union[str, int, float]]) -> Optional[float]:
     """Número de '500 m²' ou float já extraído."""
     if isinstance(area, (int, float)):
@@ -111,12 +139,7 @@ def _area_m2(area: Optional[Union[str, int, float]]) -> Optional[float]:
     match = _RE_AREA_NUM.search(str(area))
     if not match:
         return None
-    raw = match.group(1).replace(".", "").replace(",", ".")
-    try:
-        value = float(raw)
-    except ValueError:
-        return None
-    return value if value > 0 else None
+    return _parse_area_number(match.group(1))
 
 
 def estimate_market_value(
@@ -126,14 +149,19 @@ def estimate_market_value(
 ) -> Optional[dict[str, Any]]:
     """valor_mercado_estimado = preço/m² FipeZap × área.
 
-    None se a cidade não está no índice, se falta área, ou se o tipo
-    não é o que o FipeZap mede (terreno, galpão, etc.).
+    None se a cidade não está no índice, se falta área, se o tipo
+    não é o que o FipeZap mede (terreno, galpão, etc.), ou se a área
+    extrapola o que faz sentido pro tipo (ex.: 6908 m² num apartamento).
     """
-    if (tipo or "").lower() in TIPOS_SEM_FIPEZAP:
+    kind = (tipo or "").lower()
+    if kind in TIPOS_SEM_FIPEZAP:
         return None
     ppm2 = price_per_m2(cidade)
     area_m2 = _area_m2(area)
     if ppm2 is None or area_m2 is None:
+        return None
+    teto = _MAX_M2_RESIDENCIAL.get(kind, 800.0)
+    if area_m2 > teto:
         return None
     return {
         "valor_m2_regiao": ppm2,

@@ -58,8 +58,10 @@ RE_BAIRRO = re.compile(
     r"(?:bairro|no parque|no jardim|condom[ií]nio(?: residencial)?)\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ÿ' ]{2,40})",
     re.I,
 )
+# Aceita 76,7508 / 83,29 / 1.234,56 / 200 — sem comer «76,7508» como «7508».
 RE_AREA = re.compile(
-    r"(\d{1,3}(?:\.\d{3})+|\d+)(?:[.,]\d{1,2})?\s*(?:m[²2]|m\s*²|metros quadrados)",
+    r"(\d{1,3}(?:\.\d{3})+,\d{1,4}|\d{1,3}(?:\.\d{3})+|\d+,\d{1,4}|\d+)"
+    r"\s*(?:m[²2]|m\s*²|metros quadrados)",
     re.I,
 )
 RE_FIELD_CUT = re.compile(
