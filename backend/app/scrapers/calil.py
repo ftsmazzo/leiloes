@@ -2,6 +2,7 @@
 Calil Leilões — site próprio (Soleon), não Superbid Exchange.
 A loja Superbid 818 está sem ofertas abertas; o catálogo vivo é calilleiloes.com.br.
 Parser coberto por fixture — CI não bate no site.
+No EasyPanel, SCRAPE_PROXY_URL manda o GET pelo PC (IP residencial).
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from bs4 import BeautifulSoup
 
 from .base import BaseScraper, ScrapedAuction, ScrapedLot
 from .extract import cidade_from_text, extra_json, parse_br_currency, tipo_from_text
+from .home_proxy import get_html
 from .soleon import HEADERS, fill_item_details_async, lots_from_imovel_list, lots_from_leiloes_cards
 
 RE_LANCE_ATUAL = re.compile(r"Lance\s+atual:\s*R\$\s*([\d.,]+)", re.I)
@@ -29,16 +31,18 @@ class CalilScraper(BaseScraper):
     async def scrape(self) -> list[ScrapedAuction]:
         by_id: dict[str, ScrapedLot] = {}
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers=HEADERS) as client:
-            await client.get(self.base_url)
+            try:
+                await get_html(client, self.base_url)
+            except Exception:
+                pass
             page = 1
             while page <= 12:
                 url = f"{self.base_url}/lotes/imovel?tipo=imovel&page={page}"
                 try:
-                    r = await client.get(url)
-                    r.raise_for_status()
+                    html = await get_html(client, url)
                 except Exception:
                     break
-                found = lots_from_imovel_list(r.text, self.base_url)
+                found = lots_from_imovel_list(html, self.base_url)
                 new = 0
                 for lot in found:
                     if lot.external_id not in by_id:
@@ -48,9 +52,8 @@ class CalilScraper(BaseScraper):
                     break
                 page += 1
             try:
-                listing = await client.get(f"{self.base_url}/leiloes")
-                listing.raise_for_status()
-                for lot in lots_from_leiloes_cards(listing.text, self.base_url):
+                listing = await get_html(client, f"{self.base_url}/leiloes")
+                for lot in lots_from_leiloes_cards(listing, self.base_url):
                     if lot.external_id not in by_id:
                         by_id[lot.external_id] = lot
             except Exception:

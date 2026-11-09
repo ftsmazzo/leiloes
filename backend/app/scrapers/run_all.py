@@ -118,6 +118,15 @@ async def run_all(on_progress=None):
                 summary["by_source"][scraper.source_name] = {"auctions": n_auctions, "lots": n_lots}
                 summary["total_auctions"] += n_auctions
                 summary["total_lots"] += n_lots
+                if scraper.source_name in ("calil", "vegas") and n_lots == 0:
+                    from app.scrapers.home_proxy import configured as proxy_on
+
+                    hint = (
+                        "proxy casa offline ou TOKEN inválido (SCRAPE_PROXY_URL)"
+                        if proxy_on()
+                        else "0 lotes — IP do VPS costuma ser bloqueado; configure SCRAPE_PROXY_URL"
+                    )
+                    summary["errors"].append({"source": scraper.source_name, "error": hint})
                 touched = await session.run_sync(persist_auctions, auctions)
                 summary["alertas_enviados"] += _process_alerts(touched)
                 await session.commit()

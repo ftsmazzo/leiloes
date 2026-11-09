@@ -15,6 +15,7 @@ from bs4 import BeautifulSoup, Tag
 
 from .base import BaseScraper, ScrapedAuction, ScrapedLot
 from .extract import parse_br_currency
+from .home_proxy import get_html
 from .soleon import (
     DETAIL_CAP,
     HEADERS,
@@ -56,10 +57,12 @@ class VegasScraper(BaseScraper):
         seen_ids: set[str] = set()
 
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers=HEADERS) as client:
-            await client.get(self.base_url)
-            r = await client.get(f"{self.base_url}/leiloes")
-            r.raise_for_status()
-            for auction in self.auctions_from_html(r.text):
+            try:
+                await get_html(client, self.base_url)
+            except Exception:
+                pass
+            listing = await get_html(client, f"{self.base_url}/leiloes")
+            for auction in self.auctions_from_html(listing):
                 if auction.external_id in seen_ids:
                     continue
                 seen_ids.add(auction.external_id)
@@ -71,9 +74,8 @@ class VegasScraper(BaseScraper):
                     continue
                 lotes_url = f"{self.base_url}/leilao/{auction.external_id}/lotes"
                 try:
-                    r = await client.get(lotes_url)
-                    r.raise_for_status()
-                    auction.lots = lots_from_lotes_page(r.text, self.base_url)
+                    html = await get_html(client, lotes_url)
+                    auction.lots = lots_from_lotes_page(html, self.base_url)
                 except Exception as exc:
                     print(f"Vegas lotes {auction.external_id}: {exc}")
                     auction.lots = []

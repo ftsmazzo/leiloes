@@ -495,7 +495,10 @@ async def fill_item_details_async(
     client,
     base_url: str,
     cap: int = DETAIL_CAP,
+    via_home: bool | None = None,
 ) -> tuple[list[ScrapedLot], int]:
+    from .home_proxy import get_html
+
     used = 0
     left = cap
     out = list(lots)
@@ -506,9 +509,8 @@ async def fill_item_details_async(
             continue
         url = (lot.url or f"{base_url.rstrip('/')}/item/{lot.external_id}/detalhes").split("?")[0]
         try:
-            r = await client.get(url)
-            r.raise_for_status()
-            out[i] = merge_lot(lot, parse_item_detail(r.text, base_url, lot.external_id))
+            html = await get_html(client, url, via_home=via_home)
+            out[i] = merge_lot(lot, parse_item_detail(html, base_url, lot.external_id))
             left -= 1
             used += 1
         except Exception as exc:
