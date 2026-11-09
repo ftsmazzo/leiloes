@@ -629,7 +629,13 @@ def test_avaliar_lote_enriquece_com_infosimples_quando_tem_token():
     os.environ["INFOSIMPLES_API_TOKEN"] = "abc"
 
     def fake_extract(_data: bytes):
-        return ("Processo n. 0001234-11.2012.8.26.0100. Laudo de avaliação R$ 400.000,00.", False)
+        # Precisa de ≥80 chars e tipo laudo/matrícula/penhora para contar como peça útil;
+        # sem peça, Infosimples não é chamado (custa R$0,20).
+        return (
+            "Laudo de avaliação pericial do imóvel. Processo n. 0001234-11.2012.8.26.0100. "
+            "Valor de avaliação R$ 400.000,00. Área privativa 78 m². Imóvel desocupado.",
+            False,
+        )
 
     def fake_infosimples(_url, _params):
         return {
@@ -653,6 +659,7 @@ def test_avaliar_lote_enriquece_com_infosimples_quando_tem_token():
             fetch_infosimples=fake_infosimples,
             write_ai=False,
         )
+        assert extra.get("docs_limitados") is not True
         assert extra["infosimples_valor_causa"] == 5000.0
         assert extra["infosimples_foro"] == "Foro Central"
     finally:
