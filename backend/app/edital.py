@@ -755,6 +755,19 @@ def _mistral_parecer(facts: dict[str, Any], *, fetch: Optional[Callable] = None)
 
 
 def fetch_html(url: str) -> str:
+    """Página do lote. Calil/Vegas passam pelo proxy da casa (IP residencial)."""
+    from app.scrapers.home_proxy import (
+        HomeProxyError,
+        allowed_url,
+        configured,
+        fetch_text_sync,
+    )
+
+    if configured() and allowed_url(url):
+        try:
+            return fetch_text_sync(url, timeout=45.0)
+        except HomeProxyError:
+            raise
     with httpx.Client(timeout=25.0, follow_redirects=True, headers=HEADERS) as client:
         r = client.get(url)
         r.raise_for_status()
@@ -762,6 +775,7 @@ def fetch_html(url: str) -> str:
 
 
 def fetch_pdf(url: str) -> bytes:
+    """PDF público. CDN Soleon (CloudFront) vai direto; host Calil/Vegas via proxy HTML não serve binário."""
     headers = {**HEADERS, "Accept": "application/pdf,*/*"}
     with httpx.Client(timeout=PDF_TIMEOUT, follow_redirects=True, headers=headers) as client:
         r = client.get(url)

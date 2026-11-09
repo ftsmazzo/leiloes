@@ -355,9 +355,14 @@ async def avaliar_lot(lot_id: int, request: Request, db: AsyncSession = Depends(
             anexos=arquivos or None,
         )
     except httpx.HTTPError as exc:
-        raise HTTPException(502, f"Não foi possível ler a página ou o PDF: {exc}") from exc
+        # 422 (não 502): o Traefik do EasyPanel engole 502 e o browser vê "Failed to fetch".
+        raise HTTPException(422, f"Não foi possível ler a página ou o PDF: {exc}") from exc
     except Exception as exc:
-        raise HTTPException(502, f"Falha ao avaliar o lote: {exc}") from exc
+        from app.scrapers.home_proxy import HomeProxyError
+
+        if isinstance(exc, HomeProxyError):
+            raise HTTPException(422, f"Proxy da casa: {exc}") from exc
+        raise HTTPException(422, f"Falha ao avaliar o lote: {exc}") from exc
     finally:
         _avaliar_running = False
     apply_avaliacao_to_lot(lot, filled)
