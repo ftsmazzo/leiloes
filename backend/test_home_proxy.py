@@ -75,9 +75,46 @@ def test_fetch_text_rejeita_host_estranho():
         os.environ.pop("SCRAPE_PROXY_TOKEN", None)
 
 
+def test_fetch_text_sync_usa_proxy():
+    os.environ["SCRAPE_PROXY_URL"] = "https://proxy.example"
+    os.environ["SCRAPE_PROXY_TOKEN"] = "segredo"
+
+    class FakeResp:
+        status_code = 200
+
+        def json(self):
+            return {"status": 200, "text": "<html>sync</html>"}
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            assert url.endswith("/fetch")
+            assert headers["Authorization"] == "Bearer segredo"
+            return FakeResp()
+
+    original = home_proxy.httpx.Client
+    home_proxy.httpx.Client = FakeClient
+    try:
+        text = home_proxy.fetch_text_sync("https://www.calilleiloes.com.br/item/1/detalhes")
+        assert text == "<html>sync</html>"
+    finally:
+        home_proxy.httpx.Client = original
+        os.environ.pop("SCRAPE_PROXY_URL", None)
+        os.environ.pop("SCRAPE_PROXY_TOKEN", None)
+
+
 if __name__ == "__main__":
     test_allowed_url()
     test_configured_depends_on_env()
     test_fetch_text_usa_proxy()
     test_fetch_text_rejeita_host_estranho()
+    test_fetch_text_sync_usa_proxy()
     print("ok")
