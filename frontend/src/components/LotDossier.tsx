@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { LedgerItem, ledgerOf, Lot, lotHeadline, LotPraca } from './LotCard';
+import { LotReport } from './LotReport';
 import { API_URL, formatMoney, httpUrl } from '../lib/api';
 
 function formatStamp(iso?: string): string | null {
@@ -159,8 +160,13 @@ export function LotDossier({ lot: initial }: { lot: Lot }) {
     }
   };
 
+  const imprimir = () => {
+    window.print();
+  };
+
   return (
-    <article className="dossier">
+    <>
+    <article className="dossier dossier-screen">
       <Link className="dossier-back" href="/">
         ← Catálogo
       </Link>
@@ -370,6 +376,9 @@ export function LotDossier({ lot: initial }: { lot: Lot }) {
           <button type="button" className="btn" onClick={solicitar} disabled={busy} aria-busy={busy}>
             {busy ? 'Lendo documentos…' : lot.avaliado_em ? 'Atualizar avaliação' : 'Solicitar avaliação'}
           </button>
+          <button type="button" className="btn btn-secondary" onClick={imprimir}>
+            Imprimir / PDF
+          </button>
           {site ? (
             <a className="btn btn-secondary" href={site} target="_blank" rel="noopener noreferrer">
               Abrir no leiloeiro
@@ -379,5 +388,7 @@ export function LotDossier({ lot: initial }: { lot: Lot }) {
         {erro ? <p className="msg msg-error">{erro}</p> : null}
       </section>
     </article>
+    <LotReport lot={lot} />
+    </>
   );
 }
