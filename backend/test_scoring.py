@@ -249,9 +249,15 @@ def test_usufruto_e_meacao_limitam_score():
 
 
 def test_usufruto_meacao_suspeita_nao_trava_o_teto():
-    """Mencao condicional ('caso haja usufruto') em clausula generica do
-    edital nao pode capar o score igual a uma confirmacao de verdade."""
+    """Menção condicional só pede conferência quando falta peça.
+    Com peça lida e confiança baixa, o ledger não emite R2 (já conferiu)."""
     usufruto_suspeita = compute_score(
+        title="Casa",
+        current_bid=100000,
+        reference_value=400000,
+        riscos={"usufruto": True, "usufruto_confianca": "baixa", "docs_limitados": True},
+    )
+    usufruto_eventual_com_peca = compute_score(
         title="Casa",
         current_bid=100000,
         reference_value=400000,
@@ -272,6 +278,7 @@ def test_usufruto_meacao_suspeita_nao_trava_o_teto():
     assert usufruto_suspeita["score"] > 28
     assert usufruto_suspeita["score"] > usufruto_confirmado["score"]
     assert any("possível usufruto" in m for m in usufruto_suspeita["motivos"])
+    assert not any("possível usufruto" in m for m in usufruto_eventual_com_peca["motivos"])
     assert meacao_suspeita["score"] > 28
     assert any("meação" in m and "condicional" in m for m in meacao_suspeita["motivos"])
 
