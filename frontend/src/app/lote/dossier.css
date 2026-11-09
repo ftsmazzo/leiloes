@@ -1,0 +1,241 @@
+.dossier-shell {
+  --paper: #eef1f6;
+  --ink: #141922;
+  --muted: #5f6978;
+  --line: #dce1e9;
+  --blue: #073da5;
+  --danger: #8f1d18;
+  --ok: #1b5e20;
+  --motion: 200ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  color: var(--ink);
+  font-family: var(--font-dossier-ui), ui-sans-serif, system-ui, sans-serif;
+}
+
+.dossier {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 0 0 3rem;
+}
+
+.dossier-back {
+  display: inline-block;
+  margin: 0 0 1.5rem;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.dossier-back:hover,
+.dossier-back:focus-visible {
+  color: var(--ink);
+}
+
+.dossier-cover {
+  display: grid;
+  gap: 1.25rem;
+  margin-bottom: 2.25rem;
+}
+
+.dossier-cover img {
+  width: 100%;
+  height: 14rem;
+  object-fit: cover;
+  background: var(--line);
+}
+
+.dossier-kicker {
+  margin: 0 0 0.35rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.dossier h1,
+.dossier h2 {
+  font-family: var(--font-dossier-display), Georgia, 'Times New Roman', serif;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.dossier h1 {
+  margin: 0 0 0.5rem;
+  font-size: 2rem;
+  line-height: 1.15;
+}
+
+.dossier h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.35rem;
+}
+
+.dossier-verdict {
+  margin: 0.75rem 0 0;
+  padding-left: 0.85rem;
+  border-left: 3px solid var(--blue);
+}
+
+.dossier-verdict strong {
+  display: block;
+  font-size: 1.05rem;
+}
+
+.dossier-verdict p {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.dossier-verdict[data-tone='stop'] {
+  border-left-color: var(--danger);
+}
+
+.dossier-verdict[data-tone='go'] {
+  border-left-color: var(--ok-ink, #1b5e20);
+}
+
+.dossier h3 {
+  margin: 1rem 0 0.4rem;
+  font-size: 1rem;
+}
+
+.ledger-list {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+}
+
+.ledger-list li {
+  margin: 0 0 0.75rem;
+}
+
+.ledger-list p {
+  margin: 0.25rem 0 0;
+}
+
+.dossier-section {
+  padding: 1.5rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.dossier-section p {
+  margin: 0 0 0.75rem;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.dossier-section .muted {
+  color: var(--muted);
+}
+
+.praca-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.praca-list li {
+  display: grid;
+  grid-template-columns: 6.5rem 1fr auto;
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.praca-list li[data-ativa='true'] {
+  color: var(--blue);
+}
+
+.praca-list .praca-now {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.money-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.money-row div span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.money-row strong {
+  font-size: 1.15rem;
+}
+
+.trecho-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.trecho {
+  margin: 0;
+  padding: 0.85rem 1rem;
+  background: #fff;
+  border-left: 3px solid var(--line);
+  font-family: var(--font-dossier-display), Georgia, serif;
+  font-size: 1.05rem;
+  line-height: 1.45;
+}
+
+.trecho p {
+  margin: 0;
+}
+
+.trecho footer {
+  margin-top: 0.45rem;
+  font-family: var(--font-dossier-ui), ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.dossier-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 1rem;
+}
+
+.dossier-skel {
+  height: 8rem;
+  background: var(--line);
+}
+
+@media (max-width: 640px) {
+  .praca-list li,
+  .money-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .dossier-cover {
+    animation: dossier-in var(--motion) var(--ease) both;
+  }
+}
+
+@keyframes dossier-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dossier-cover {
+    animation: none;
+  }
+}

@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from app.scrapers.registry import source_names
 from app.scrapers.zuk import lots_from_html
@@ -21,6 +22,13 @@ def test_zuk_listing_has_city_address_bid():
     assert "Piauí" in (lot.raw_data or "") or "Piaui" in (lot.raw_data or "")
     assert lot.category == "terreno"
     assert lot.url and "/imovel/" in lot.url
+    extra = json.loads(lot.raw_data or "{}")
+    pracas = extra.get("pracas") or []
+    assert [p["n"] for p in pracas] == [1, 2]
+    assert pracas[0]["valor"] == 259171.81
+    assert pracas[0]["fim"].startswith("2026-08-28")
+    assert pracas[1]["valor"] == 129585.91
+    assert pracas[1]["fim"].startswith("2026-09-17")
 
 
 if __name__ == "__main__":

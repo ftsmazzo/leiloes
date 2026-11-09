@@ -55,7 +55,6 @@ RE_MEACAO = re.compile(
     r"mea[cç][aã]o\s+(?:do\s+executado|do\s+im[oó]vel|da\s+propriedade)|"
     r"(?:leil[aã]o|aliena[cç][aã]o|hasta|venda)\s+d[ae]\s+mea[cç][aã]o|"
     r"apenas\s+(?:a\s+)?mea[cç][aã]o|"
-    r"(?:50|50,00)\s*%.{0,20}(?:do\s+im[oó]vel|da\s+propriedade)|"
     r"apenas\s+(?:a\s+)?metade\s+(?:do\s+im[oó]vel|da\s+propriedade)",
     re.I,
 )
@@ -158,6 +157,26 @@ def _leiloeiro_ok(blob: str, page_text: str, source: str = "") -> Optional[bool]
     return False
 
 
+RE_PREFIX_DOC = re.compile(r"\[(edital|laudo|matricula|penhora)\]", re.I)
+
+
+def _texto_secao(blob: str, tipo: str) -> str:
+    partes: list[str] = []
+    matches = list(RE_PREFIX_DOC.finditer(blob or ""))
+    for i, match in enumerate(matches):
+        if match.group(1).lower() != tipo:
+            continue
+        fim = matches[i + 1].start() if i + 1 < len(matches) else len(blob)
+        partes.append(blob[match.end() : fim])
+    return "\n".join(partes)
+
+
+def _usufruto_afirmado(text: str) -> bool:
+    if not text or RE_USUFRUTO_LIVRE.search(text):
+        return False
+    return any(not _hedged(text, match) for match in RE_USUFRUTO.finditer(text))
+
+
 def _hedged(text: str, match: re.Match[str], window: int = 60) -> bool:
     """True se antes do trecho encontrado tem linguagem condicional/hipotética
     ("caso haja", "se houver" etc.) — cláusula genérica de edital, não
@@ -166,11 +185,35 @@ def _hedged(text: str, match: re.Match[str], window: int = 60) -> bool:
     return bool(RE_HEDGE.search(inicio))
 
 
-def _trecho_around(text: str, match: re.Match[str], pad: int = 50) -> str:
-    start = max(0, match.start() - pad)
-    end = min(len(text), match.end() + pad)
+def _trecho_around(text: str, match: re.Match[str], pad: int = 80) -> str:
+    """Recorte até a pontuação — não corta no meio da palavra."""
+    start, end = match.start(), match.end()
+    lo = max(0, start - 220)
+    hi = min(len(text), end + 180)
+    esquerda = text[lo:start]
+    ultimo = -1
+    for found in re.finditer(r"[\.!\?;]\s+|\[\w+\]\s+", esquerda):
+        ultimo = found.end()
+    if ultimo >= 0:
+        start = lo + ultimo
+    else:
+        while start > lo and text[start - 1].isalnum() and text[start].isalnum():
+            start -= 1
+    direita = text[end:hi]
+    nxt = re.search(r"[\.!\?;](?:\s|$)", direita)
+    if nxt:
+        end = end + nxt.end()
     trecho = re.sub(r"\s+", " ", text[start:end]).strip()
-    return trecho[:180]
+    trecho = re.sub(r"^[)\]\}\s,.;:-]+", "", trecho)
+    if len(trecho) <= 220:
+        return trecho
+    ancora = re.sub(r"\s+", " ", match.group(0)).strip()
+    idx = trecho.find(ancora)
+    if idx < 0:
+        return trecho[:220]
+    left = max(0, idx - 60)
+    recorte = trecho[left : left + 220].strip()
+    return re.sub(r"^[)\]\}\s,.;:-]+", "", recorte)[:220]
 
 
 def riscos_from_text(blob: str, page_text: str = "", source: str = "") -> dict[str, Any]:
@@ -204,9 +247,13 @@ def riscos_from_text(blob: str, page_text: str = "", source: str = "") -> dict[s
     mix = f"{blob}\n{page_text}"
     u = RE_USUFRUTO.search(blob)
     if u and not RE_USUFRUTO_LIVRE.search(blob):
-        out["usufruto"] = True
-        out["usufruto_confianca"] = "baixa" if _hedged(blob, u) else "alta"
-        out["usufruto_trecho"] = _trecho_around(blob, u)
+        mat = _texto_secao(blob, "matricula")
+        if mat.strip() and not _usufruto_afirmado(mat):
+            pass
+        else:
+            out["usufruto"] = True
+            out["usufruto_confianca"] = "baixa" if _hedged(blob, u) else "alta"
+            out["usufruto_trecho"] = _trecho_around(blob, u)
     meacao = RE_MEACAO.search(mix)
     if meacao:
         out["meacao"] = True

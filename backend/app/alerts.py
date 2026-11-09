@@ -24,6 +24,8 @@ def alert_min_score() -> int:
 def should_alert(extra: dict[str, Any], min_score: Optional[int] = None) -> bool:
     if extra.get("alertado"):
         return False
+    if extra.get("docs_limitados") or not extra.get("avaliado_em"):
+        return False
     score = extra.get("score")
     if not isinstance(score, int):
         return False

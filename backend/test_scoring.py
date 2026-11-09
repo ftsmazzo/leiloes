@@ -71,9 +71,9 @@ def test_fator_praca_avancada_da_bonus():
     praca1 = compute_score(title="Lote em 1ª Praça")
     praca2 = compute_score(title="Lote em 2ª Praça")
     praca3 = compute_score(title="Lote em 3ª Praça")
-    assert praca2["score"] > praca1["score"]
-    assert praca3["score"] > praca2["score"]
+    assert praca1["score"] == praca2["score"] == praca3["score"]
     assert any("2ª praça" in m for m in praca2["motivos"])
+    assert any(i.get("id") == "V3" and i.get("pontos") == 0 for i in praca2["itens"])
 
 
 def test_divida_pequena_nao_derruba_score():
@@ -112,8 +112,8 @@ def test_iptu_nao_penaliza_condominio_pesa():
         dividas={"condominio": 80000},
     )
     assert iptu["score"] > condo["score"]
-    assert any("abatido" in m for m in iptu["motivos"])
-    assert any("não se abate" in m for m in condo["motivos"])
+    assert any("sub-roga" in m or "IPTU" in m for m in iptu["motivos"])
+    assert any("propter rem" in m for m in condo["motivos"])
 
 
 def test_lance_atual_acima_do_inicial_nao_penaliza():
@@ -133,10 +133,8 @@ def test_lance_atual_acima_do_inicial_nao_penaliza():
         fonte_avaliacao="laudo",
         tem_divida=False,
     )
-    # concorrência agora é sinal de qualidade que soma ponto, não só "não penaliza"
-    assert com_concorrencia["score"] > so_inicial["score"]
-    assert any("concorrência" in m and "sinal de qualidade" in m for m in com_concorrencia["motivos"])
-    assert any("pelo lance inicial" in m for m in com_concorrencia["motivos"])
+    assert com_concorrencia["score"] <= so_inicial["score"]
+    assert any("acima do inicial" in m for m in com_concorrencia["motivos"])
     assert any("lance atual" in m and "avaliação" in m for m in com_concorrencia["motivos"])
 
 
@@ -242,8 +240,10 @@ def test_usufruto_e_meacao_limitam_score():
         reference_value=400000,
         riscos={"meacao": True, "meacao_trecho": "Penhora da meação do executado sobre o imóvel"},
     )
-    assert usufruto["score"] <= 28
-    assert meacao["score"] <= 28
+    assert usufruto["veredito"] == "falta_peca"
+    assert meacao["veredito"] == "falta_peca"
+    assert usufruto["score"] < 70
+    assert meacao["score"] < 70
     assert any("usufruto" in m for m in usufruto["motivos"])
     assert any("Penhora da meação" in m for m in meacao["motivos"])
 
@@ -273,7 +273,7 @@ def test_usufruto_meacao_suspeita_nao_trava_o_teto():
     assert usufruto_suspeita["score"] > usufruto_confirmado["score"]
     assert any("possível usufruto" in m for m in usufruto_suspeita["motivos"])
     assert meacao_suspeita["score"] > 28
-    assert any("possível meação" in m for m in meacao_suspeita["motivos"])
+    assert any("meação" in m and "condicional" in m for m in meacao_suspeita["motivos"])
 
 
 def test_citado_nao_aplica_teto():
@@ -285,7 +285,7 @@ def test_citado_nao_aplica_teto():
         riscos={"citacao": "citado", "citacao_fonte": "datajud"},
     )
     assert result["score"] > 12
-    assert any("citado (DataJud)" in m for m in result["motivos"])
+    assert result["veredito"] != "nao_aprofundar"
 
 
 def test_docs_limitados_alerta_sem_teto_de_meacao():

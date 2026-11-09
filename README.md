@@ -1,18 +1,20 @@
-# Leilões MVP — Dashboard e Scraping
+# Leilões — catálogo de trabalho
 
-Dashboard que agrega informações de sites de leilões (Calil, Vegas, etc.), armazena e atualiza os dados, com visão para uso de IA na tomada de decisão.
+Catálogo que junta lotes já publicados de Calil, Vegas, Zuk, Mega, Grupo Lance e TRT5. A busca é no que está no banco. O scrape é um job. O dossiê aponta se vale aprofundar a leitura. Não dá lance e não é palavra final.
+
+Sem matrícula, laudo ou penhora na página pública, o veredito fica **Sem norte**. Isso vale para o TRT5: o edital unificado público vira um lote por imóvel, e o texto daquele bloco não vira matrícula. O sistema não entra em área logada de leiloeiro.
 
 ## Stack
 
-- **Backend**: Python, FastAPI, PostgreSQL, scrapers (Playwright/BeautifulSoup)
-- **Frontend**: Next.js (dashboard)
+- **Backend**: Python 3.11, FastAPI, PostgreSQL (SQLite no exemplo local), httpx e BeautifulSoup
+- **Frontend**: Next.js
 - **Deploy**: Docker Compose — local e [Easy Panel](https://easypanel.io)
 
 ## Rodar localmente
 
 ### Pré-requisitos
 
-- Python 3.11+
+- Python 3.11 (a imagem Docker e o CI usam 3.11)
 - Node 18+
 - Docker e Docker Compose (para rodar tudo junto)
 
@@ -70,14 +72,14 @@ O backend cria automaticamente duas tabelas ao subir:
 
 | Tabela    | Descrição |
 |-----------|-----------|
-| **auctions** | Leilões (fonte: calil, vegas). Campos: id, external_id, source, title, url, description, starts_at, ends_at, created_at, updated_at. |
-| **lots**     | Lotes de cada leilão. Campos: id, auction_id, external_id, title, description, category, minimum_bid, current_bid, reference_value, url, raw_data, created_at, updated_at. |
+| **auctions** | Leilões. `source`: calil, vegas, zuk, mega, lance, trt5. |
+| **lots**     | Lotes. Preço e texto ficam em coluna. Score, veredito e peças lidas ficam no JSON `raw_data`. |
 
-A API expõe: `GET /api/auctions`, `GET /api/auctions/{id}`, `GET /api/lots`, `GET /api/stats`, `GET /docs` (Swagger).
+A API expõe, entre outras: `GET /api/lots`, `GET /api/lots/{id}`, `GET /api/stats` (inclui a leitura dos últimos 7 dias), `POST /api/run-scrape`, `POST /api/lots/{id}/avaliar`, `GET /docs`. Essas rotas de escrita não têm login.
 
 ## Primeiro scrape (validar dados)
 
-No **dashboard** (frontend), use o botão **Rodar scrape agora**. Ele chama a API, busca leilões (Calil e Vegas), persiste no banco e atualiza a lista na tela. Não é preciso abrir outra URL nem rodar nada em shell.
+No dashboard, use **Atualizar catálogo**. Ele dispara as fontes registradas, grava no banco e atualiza a lista. Não é preciso abrir outra URL nem rodar nada em shell.
 
 ## Estrutura
 

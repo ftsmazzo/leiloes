@@ -41,6 +41,14 @@ def test_usufruto_condicional_vira_baixa_confianca():
     assert riscos["usufruto_confianca"] == "baixa"
 
 
+def test_usufruto_eventual_do_edital_some_se_matricula_nao_afirma():
+    riscos = riscos_from_text(
+        "[edital] COPROPRIETÁRIO(S); EVENTUAL(IS) TITULAR(ES) DE USUFRUTO, USO, HABITAÇÃO. "
+        "[matricula] Apartamento 32-A. Área real privada de 45,29 m². Penhora em favor do exequente."
+    )
+    assert "usufruto" not in riscos
+
+
 def test_meacao_condicional_vira_baixa_confianca():
     riscos = riscos_from_text(
         "Eventualmente havendo meação do executado, será respeitada a fração de 50% do imóvel."
@@ -62,6 +70,11 @@ def test_meacao_e_conjuge():
 
 def test_conjuge_do_arrematante_nao_e_meacao():
     riscos = riscos_from_text("O cônjuge do arrematante deverá anuir à carta.")
+    assert "meacao" not in riscos
+
+
+def test_cinquenta_por_cento_da_avaliacao_nao_e_meacao():
+    riscos = riscos_from_text("Valor de 50% da avaliação do imóvel: R$ 180.000,00 (2ª praça).")
     assert "meacao" not in riscos
 
 
@@ -131,10 +144,12 @@ if __name__ == "__main__":
     test_citacao_por_edital()
     test_usufruto_na_matricula()
     test_usufruto_condicional_vira_baixa_confianca()
+    test_usufruto_eventual_do_edital_some_se_matricula_nao_afirma()
     test_meacao_condicional_vira_baixa_confianca()
     test_livre_de_usufruto_nao_marca()
     test_meacao_e_conjuge()
     test_conjuge_do_arrematante_nao_e_meacao()
+    test_cinquenta_por_cento_da_avaliacao_nao_e_meacao()
     test_fracao_ideal_do_condominio_nao_e_meacao()
     test_regra_generica_de_conjuge_nao_e_meacao()
     test_leiloeiro_diverge_entre_edital_e_anuncio()

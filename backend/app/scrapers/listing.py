@@ -25,11 +25,24 @@ __all__ = [
     "origem_from_text",
     "pracas_from_html",
     "pracas_from_tag",
+    "pracas_from_text",
     "merge_pracas",
 ]
 
 RE_DATE = re.compile(r"(\d{2}/\d{2}/\d{4})\s*(?:às|as)?\s*(\d{2}:\d{2})?", re.I)
-RE_PRACA_N = re.compile(r"(\d)\s*[ªa]\s*pra[cç]a", re.I)
+RE_PRACA_N = re.compile(r"(\d)\s*[ªaºo°]?\s*(?:pra[cç]a|leil[aã]o)", re.I)
+RE_DATA_N_LEILAO = re.compile(
+    r"Data\s+(\d+)\s*[ºo°ªa]?\s*Leil[aã]o:\s*(\d{2}/\d{2}/\d{4})(?:\s*(?:às|as)?\s*(\d{2}:\d{2}))?",
+    re.I,
+)
+RE_LANCE_N_LEILAO = re.compile(
+    r"Lance\s+Inicial\s+(\d+)\s*[ºo°ªa]?\s*Leil[aã]o[:\s]*R\$\s*([\d.]+,\d{2})",
+    re.I,
+)
+RE_LANCE_N_PRACA = re.compile(
+    r"Lance\s+M[ií]nimo(?:\s+aceito)?\s+da\s+(\d+)\s*[ªaºo°]?\s*pra[cç]a[:\s]*R\$\s*([\d.]+,\d{2})",
+    re.I,
+)
 
 
 def parse_br_date(s: Optional[str]) -> Optional[datetime]:
@@ -111,10 +124,18 @@ def _mark_ativa(pracas: list[dict[str, Any]], now: datetime | None = None) -> li
         return pracas
     ref = now or datetime.now()
     ativa_n: int | None = None
+    prev_fim: datetime | None = None
     for p in pracas:
-        start = _as_dt(p.get("inicio"))
+        start = _as_dt(p.get("inicio")) or prev_fim
         if start and start <= ref:
             ativa_n = p["n"]
+        prev_fim = _as_dt(p.get("fim")) or start or prev_fim
+    if ativa_n is None:
+        for p in pracas:
+            end = _as_dt(p.get("fim"))
+            if end and end >= ref:
+                ativa_n = p["n"]
+                break
     if ativa_n is None:
         return pracas
     for p in pracas:
@@ -181,7 +202,57 @@ def pracas_from_tag(root: Tag, now: datetime | None = None) -> list[dict[str, An
         )
         if item:
             out.append(item)
-    return _mark_ativa(sorted(out, key=lambda p: p["n"]), now)
+    if out:
+        return _mark_ativa(sorted(out, key=lambda p: p["n"]), now)
+
+    zuk: list[dict[str, Any]] = []
+    for li in root.select("li.card-property-price"):
+        n = _praca_n(text_of(li.select_one(".card-property-price-label")))
+        if n is None:
+            continue
+        valor_txt = text_of(li.select_one(".card-property-price-value")) or text_of(li)
+        money = re.search(r"R\$\s*[\d.]+,\d{2}", valor_txt)
+        item = _praca_item(
+            n,
+            fim=parse_br_date(text_of(li.select_one(".card-property-price-data"))),
+            valor=parse_br_currency(money.group(0) if money else valor_txt),
+        )
+        if item:
+            zuk.append(item)
+    if zuk:
+        return _mark_ativa(sorted(zuk, key=lambda p: p["n"]), now)
+
+    return pracas_from_text(text_of(root), now=now)
+
+
+def pracas_from_text(blob: str, now: datetime | None = None) -> list[dict[str, Any]]:
+    """Soleon (Calil/Vegas): 'Data 1º Leilão' + lance da 1ª/2ª praça no texto."""
+    by_n: dict[int, dict[str, Any]] = {}
+    for match in RE_DATA_N_LEILAO.finditer(blob or ""):
+        n = int(match.group(1))
+        clock = match.group(3) or "00:00"
+        fim = parse_br_date(f"{match.group(2)} {clock}")
+        item = _praca_item(n, fim=fim)
+        if item:
+            by_n[n] = item
+    for match in RE_LANCE_N_LEILAO.finditer(blob or ""):
+        n = int(match.group(1))
+        valor = parse_br_currency(match.group(2))
+        cur = dict(by_n.get(n) or {"n": n})
+        if valor and valor > 0:
+            cur["valor"] = valor
+        if len(cur) > 1:
+            by_n[n] = cur
+    for match in RE_LANCE_N_PRACA.finditer(blob or ""):
+        n = int(match.group(1))
+        valor = parse_br_currency(match.group(2))
+        cur = dict(by_n.get(n) or {"n": n})
+        if valor and valor > 0:
+            cur["valor"] = valor
+        if len(cur) > 1:
+            by_n[n] = cur
+    out = [by_n[n] for n in sorted(by_n) if len(by_n[n]) > 1]
+    return _mark_ativa(out, now)
 
 
 def pracas_from_html(html: str, now: datetime | None = None) -> list[dict[str, Any]]:

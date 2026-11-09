@@ -33,4 +33,6 @@ app.include_router(router)
 
 @app.get("/")
 async def root():
-    return {"message": "Leilões API", "docs": "/docs"}
+    from app.apify_mercado import apify_disponivel
+
+    return {"message": "Leilões API", "docs": "/docs", "apify": apify_disponivel()}

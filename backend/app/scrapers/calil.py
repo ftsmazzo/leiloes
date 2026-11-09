@@ -14,7 +14,7 @@ from bs4 import BeautifulSoup
 
 from .base import BaseScraper, ScrapedAuction, ScrapedLot
 from .extract import cidade_from_text, extra_json, parse_br_currency, tipo_from_text
-from .soleon import HEADERS, lots_from_imovel_list, lots_from_leiloes_cards
+from .soleon import HEADERS, fill_item_details_async, lots_from_imovel_list, lots_from_leiloes_cards
 
 RE_LANCE_ATUAL = re.compile(r"Lance\s+atual:\s*R\$\s*([\d.,]+)", re.I)
 
@@ -56,7 +56,13 @@ class CalilScraper(BaseScraper):
             except Exception:
                 pass
 
-        lots = list(by_id.values())
+            lots = list(by_id.values())
+            lots, _ = await fill_item_details_async(
+                lots,
+                client=client,
+                base_url=self.base_url,
+            )
+
         if not lots:
             return []
         return [

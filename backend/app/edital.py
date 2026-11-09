@@ -11,7 +11,7 @@ import os
 import re
 from datetime import date, datetime
 from io import BytesIO
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import urljoin
 
 import httpx
@@ -20,6 +20,7 @@ from pypdf import PdfReader
 
 from app.scrapers.extract import extra_json, leilao_status, parse_br_currency
 from app.scrapers.listing import HEADERS, href_of, text_of
+from app.gliner_avaliar import ocupacao_se_afirmada
 from app.juridico import riscos_from_text
 from app.scoring import RE_DESOCUPADO, RE_OCUPADO
 
@@ -28,6 +29,9 @@ MAX_PDF_BYTES = 8_000_000
 MAX_PAGES = 40
 MAX_TEXT = 100_000
 PDF_TIMEOUT = 30.0
+BLOB_PARECER = 8_000
+PARECER_MAX = 3_600
+TEXTO_MIN_PARECER = 80
 
 SKIP_HREF = re.compile(
     r"proposta|politica|privacidade|cookie|termos-de-uso|modelo-de-proposta",
@@ -63,7 +67,7 @@ RE_VENAL_EDIF = re.compile(
 )
 RE_LAUDO = re.compile(
     r"(?:laudo\s+de\s+avalia[cç][aã]o|avalia[cç][aã]o(?:\s+(?:judicial|pericial|atualizada))?|"
-    r"valor\s+de\s+mercado)[:\s,]*(?:no\s+valor\s+de\s+)?R\$\s*([\d.]+,\d{2})",
+    r"valor\s+de\s+mercado|reavaliad[oa](?:\s+em)?)[:\s,]*(?:no\s+valor\s+de\s+)?R\$\s*([\d.]+,\d{2})",
     re.I,
 )
 RE_AREA_TERRENO = re.compile(
@@ -71,7 +75,18 @@ RE_AREA_TERRENO = re.compile(
     re.I,
 )
 RE_AREA_EDIF = re.compile(
-    r"(?:edifica[cç][aã]o\s+principal|[aá]rea\s+(?:privativa|constru[ií]da|[úu]til))[:\s]+([\d.]+(?:,\d+)?)\s*m",
+    r"(?:edifica[cç][aã]o\s+principal|"
+    r"[aá]rea\s+(?:real\s+)?(?:privativa|privada|constru[ií]da|[úu]til)(?:\s+coberta)?)"
+    r"(?:[:\s]+|\s+de\s+)([\d.]+(?:,\d+)?)\s*m",
+    re.I,
+)
+# TRT5 escreve na ordem inversa: "31,89m² de área privativa" (número antes do rótulo).
+RE_AREA_TERRENO_REV = re.compile(
+    r"([\d.]+(?:,\d+)?)\s*m[²2].{0,15}[aá]rea\s+(?:do\s+)?terreno",
+    re.I,
+)
+RE_AREA_EDIF_REV = re.compile(
+    r"([\d.]+(?:,\d+)?)\s*m[²2].{0,20}[aá]rea\s+(?:privativa|constru[ií]da|[úu]til)",
     re.I,
 )
 RE_MATRICULA_NUM = re.compile(
@@ -232,13 +247,53 @@ RE_CARIMBO_SEM_CONTEUDO = re.compile(
     r"|visualiza[cç\?][aã\?]o disponibilizada pelo ri digital.*)\s*$",
     re.I | re.M,
 )
+RE_CAPA_LIXO = re.compile(
+    r"RI Digital|e-SAJ|CERTID[AÃ]O DE MATR[IÍ]CULA|visualiza[cç][aã]o disponibilizada|"
+    r"solicitado por:|para conferir o original|c[oó]pia do original",
+    re.I,
+)
 
 
 def _conteudo_util(text: str) -> str:
     """Remove carimbos de autenticação/visualização (e-SAJ/TJSP, RI Digital) que sozinhos
     passam de 80 chars e mascaram um PDF que na prática só tem imagem escaneada por trás."""
     sem_carimbo = RE_CARIMBO_SEM_CONTEUDO.sub("", text)
-    return re.sub(r"\s+", " ", sem_carimbo).strip()
+    linhas = []
+    for linha in sem_carimbo.splitlines():
+        limpa = linha.strip()
+        if not limpa or RE_CAPA_LIXO.search(limpa):
+            continue
+        letras = [ch for ch in limpa if ch.isalpha()]
+        if letras and sum(1 for ch in letras if ch.isupper()) / len(letras) > 0.85 and len(limpa) < 80:
+            continue
+        linhas.append(limpa)
+    return re.sub(r"\s+", " ", " ".join(linhas)).strip()
+
+
+def peca_nativa_serve(tipo: str, text: str) -> bool:
+    """Matrícula/laudo nativos só valem se tiverem fato (número, área, valor)."""
+    if len(_conteudo_util(text)) < 80:
+        return False
+    if tipo == "matricula":
+        return bool(
+            RE_MATRICULA_NUM.search(text)
+            or RE_AREA_EDIF.search(text)
+            or RE_AREA_EDIF_REV.search(text)
+            or RE_AREA_TERRENO.search(text)
+            or RE_AREA_TERRENO_REV.search(text)
+        )
+    if tipo == "laudo":
+        return bool(RE_LAUDO.search(text) or RE_AREA_EDIF.search(text) or RE_AREA_EDIF_REV.search(text))
+    return True
+
+
+def parecer_parece_json(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return False
+    if t.startswith("```") or t[:1] in "{[":
+        return True
+    return bool(re.search(r"```json", t[:120], re.I))
 
 
 def extract_pdf_text(data: bytes) -> tuple[str, bool]:
@@ -393,8 +448,8 @@ def fields_from_text(blob: str, page_text: str = "", source: str = "") -> dict[s
     mix = f"{blob}\n{page_text}" if page_text else blob
     out.update(_pick_avaliacao(blob))
     out.update(avaliacao_data_from_text(blob))
-    area_terreno = _area(RE_AREA_TERRENO, mix)
-    area_edif = _area(RE_AREA_EDIF, mix)
+    area_terreno = _area(RE_AREA_TERRENO, mix) or _area(RE_AREA_TERRENO_REV, mix)
+    area_edif = _area(RE_AREA_EDIF, mix) or _area(RE_AREA_EDIF_REV, mix)
     if area_terreno:
         out["area_terreno"] = area_terreno
     if area_edif:
@@ -409,7 +464,7 @@ def fields_from_text(blob: str, page_text: str = "", source: str = "") -> dict[s
     ocupado = bool(RE_OCUPADO.search(mix)) and not desocupado
     if desocupado:
         out["ocupacao"] = "desocupado"
-    elif ocupado:
+    elif ocupado and ocupacao_se_afirmada(mix, "ocupado"):
         out["ocupacao"] = "ocupado"
     iptu = parse_br_currency(m.group(1)) if (m := RE_IPTU.search(mix)) else None
     condo_vals = [parse_br_currency(m.group(1)) for m in RE_CONDO.finditer(mix)]
@@ -441,8 +496,33 @@ def fields_from_text(blob: str, page_text: str = "", source: str = "") -> dict[s
     return out
 
 
+def _parecer_do_ledger(facts: dict[str, Any]) -> Optional[str]:
+    itens = facts.get("ledger")
+    if not isinstance(itens, list) or not itens:
+        return None
+    titulo = facts.get("veredito_titulo") or "Indício"
+    corpo = facts.get("veredito_corpo") or ""
+    a_favor = [i.get("frase") for i in itens if isinstance(i, dict) and i.get("lado") == "vantagem" and i.get("frase")]
+    contra = [
+        i.get("frase")
+        for i in itens
+        if isinstance(i, dict) and i.get("lado") in ("risco", "veto") and i.get("frase")
+    ]
+    falta = [i.get("frase") for i in itens if isinstance(i, dict) and i.get("lado") == "incerteza" and i.get("frase")]
+    blocos = [
+        f"{titulo}. {corpo}".strip(),
+        "A favor: " + (" ".join(f"{t.rstrip('.')}." for t in a_favor) if a_favor else "Nenhuma vantagem com documento."),
+        "Contra: " + (" ".join(f"{t.rstrip('.')}." for t in contra) if contra else "Nenhum risco com documento."),
+        "O que falta: " + (" ".join(f"{t.rstrip('.')}." for t in falta[:4]) if falta else "Nada além do que já está no ledger."),
+    ]
+    return "\n\n".join(blocos)
+
+
 def parecer_from_facts(facts: dict[str, Any]) -> str:
     """Parecer objetivo sem inventar número. Usado no CI e se a IA falhar."""
+    ledger_txt = _parecer_do_ledger(facts)
+    if ledger_txt:
+        return ledger_txt
     score = facts.get("score")
     linhas = []
     if isinstance(score, int):
@@ -496,23 +576,66 @@ def parecer_from_facts(facts: dict[str, Any]) -> str:
             f"Valor da causa que originou a execução: R$ {valor_causa:,.2f} "
             "(dívida original, não é o valor do imóvel).".replace(",", "X").replace(".", ",").replace("X", ".")
         )
+    for t in (facts.get("trechos") or [])[:4]:
+        if isinstance(t, dict) and t.get("texto"):
+            origem = t.get("origem") or t.get("tipo") or "documento"
+            linhas.append(f"«{t['texto']}» ({origem}).")
     if not linhas:
         return "Não foi possível montar o parecer com os indícios disponíveis."
     return " ".join(linhas)
 
 
-def _mistral_parecer(facts: dict[str, Any]) -> str | None:
-    key = os.getenv("OPENROUTER_API_KEY", "").strip()
-    if not key:
-        return None
-    model = (
-        os.getenv("OPENROUTER_WRITE_MODEL")
-        or os.getenv("OPENROUTER_EXTRACT_MODEL")
-        or "mistralai/ministral-8b-2512"
-    ).strip()
-    payload = {
+def texto_util_para_parecer(
+    *,
+    blob: str = "",
+    page_text: str = "",
+    trechos: Optional[list] = None,
+) -> bool:
+    """IA só desliga se não houver texto (docs vazios / OCR falhou / página oca)."""
+    if any(isinstance(t, dict) and (t.get("texto") or "").strip() for t in (trechos or [])):
+        return True
+    return len((page_text or "").strip()) >= TEXTO_MIN_PARECER or len((blob or "").strip()) >= TEXTO_MIN_PARECER
+
+
+def payload_parecer(facts: dict[str, Any]) -> dict[str, Any]:
+    trechos = []
+    for t in facts.get("trechos") or []:
+        if not isinstance(t, dict) or not t.get("texto"):
+            continue
+        item = {
+            "tipo": t.get("tipo"),
+            "texto": str(t.get("texto"))[:220],
+            "origem": t.get("origem"),
+        }
+        if t.get("peca"):
+            item["peca"] = t.get("peca")
+        if t.get("ocr"):
+            item["ocr"] = True
+        if t.get("pagina"):
+            item["pagina"] = t.get("pagina")
+        trechos.append(item)
+    blob = facts.get("texto_docs")
+    texto_docs = blob[:BLOB_PARECER] if isinstance(blob, str) else ""
+    pracas = []
+    for p in facts.get("pracas") or []:
+        if not isinstance(p, dict):
+            continue
+        pracas.append(
+            {
+                "n": p.get("n"),
+                "valor": p.get("valor"),
+                "inicio": p.get("inicio"),
+                "ativa": bool(p.get("ativa")),
+            }
+        )
+    return {
         "score": facts.get("score"),
         "motivos": facts.get("motivos") or [],
+        "ledger": facts.get("ledger") or [],
+        "veredito": facts.get("veredito"),
+        "veredito_titulo": facts.get("veredito_titulo"),
+        "veredito_corpo": facts.get("veredito_corpo"),
+        "regime": facts.get("regime"),
         "avaliacao": facts.get("avaliacao_edital"),
         "avaliacao_fonte": facts.get("avaliacao_fonte"),
         "valor_venal_imovel": facts.get("valor_venal_imovel"),
@@ -535,7 +658,72 @@ def _mistral_parecer(facts: dict[str, Any]) -> str | None:
         "nao_entrar": bool((facts.get("riscos") or {}).get("nao_entrar") or facts.get("nao_entrar")),
         "valor_causa_execucao": facts.get("infosimples_valor_causa"),
         "peticoes_recentes_processo": facts.get("infosimples_peticoes_recentes"),
+        "trechos": trechos[:8],
+        "texto_docs": texto_docs,
+        "pracas": pracas,
     }
+
+
+_SYSTEM_PARECER = (
+    "Você é analista de leilão judicial de imóvel no Brasil. "
+    "Escreva exatamente 3 parágrafos, separados por linha em branco, em português. "
+    "(1) A favor: só itens do ledger com lado vantagem, com métrica e fonte. "
+    "(2) Contra: veto e riscos do ledger, com trecho entre « » se existir. "
+    "(3) O que falta: incertezas do ledger. Sem parágrafo genérico. "
+    "Use só o JSON (fatos + trechos + texto_docs). Não invente valor, dívida, ocupação nem desconto. "
+    "lance_atual é o preço pedido agora, NÃO valor de arrematação. "
+    "Nunca escreva que o imóvel foi arrematado, vendido ou encerrado "
+    "salvo se status for encerrado. "
+    "Se status for aguardando, diga que o leilão ainda não abriu. "
+    "Valor venal do terreno NÃO é o valor do imóvel; use avaliacao "
+    "ou valor_venal_imovel. Área útil é area_edificacao, não area_terreno. "
+    "avaliacao_fonte=venal_imovel é IPTU, não laudo de mercado. "
+    "avaliacao_data antiga é oportunidade: o juiz costuma só corrigir "
+    "monetariamente, abaixo do mercado. 1 ano já é bom; 5+ melhor; 10+ melhor ainda. "
+    "Lance acima de laudo antigo NÃO é overpay e NÃO é ponto negativo. "
+    "IPTU em leilão judicial em geral é abatido; condomínio NÃO se abate. "
+    "Lance atual acima do inicial é concorrência, não ponto negativo. "
+    "Alerta o lance atual em relação à avaliação recente; laudo antigo continua oportunidade. "
+    "Leiloeiro da mesma casa (Calil, Zuk, Vegas, Mega, Lance) no site e no edital "
+    "é o mesmo — não diga divergência. "
+    "citacao nao_citado ou pendente: diga para não entrar. "
+    "Usufruto só se riscos.usufruto. Meação só se riscos.meacao for true — "
+    "fração ideal de condomínio e regra genérica de cônjuge NÃO são meação. "
+    "Não diga 'não entre' salvo se nao_entrar for true. "
+    "Não invente praça, desconto judicial, ocupação nem débito. "
+    "avaliacao_data_origem=processo é a data do processo, NÃO do laudo. "
+    "Se datajud for nao_encontrado ou indisponivel, diga que o DataJud "
+    "não trouxe movimentos. Se docs_limitados, diga que faltou texto de "
+    "matrícula/laudo e não afirme o que não leu. "
+    "DataJud só traz movimentos, não peças do processo. "
+    "valor_causa_execucao é o valor da dívida que originou a execução "
+    "(vindo do processo), NUNCA o valor do imóvel nem a avaliação — não "
+    "confunda os dois. peticoes_recentes_processo é só contexto de "
+    "atividade do processo, não confirma nem descarta risco nenhum. "
+    "Não use adjetivo de venda. Se faltar dado, diga que falta. "
+    "Explique o score com os motivos."
+)
+
+
+def _mistral_parecer(facts: dict[str, Any], *, fetch: Optional[Callable] = None) -> str | None:
+    payload = payload_parecer(facts)
+    if fetch is not None:
+        try:
+            text = fetch(payload)
+        except Exception:
+            return None
+        text = str(text).strip() if text else ""
+        if not text or parecer_parece_json(text):
+            return None
+        return text[:PARECER_MAX]
+    key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    if not key:
+        return None
+    model = (
+        os.getenv("OPENROUTER_WRITE_MODEL")
+        or os.getenv("OPENROUTER_EXTRACT_MODEL")
+        or "mistralai/ministral-8b-2512"
+    ).strip()
     try:
         r = httpx.post(
             "https://openrouter.ai/api/v1/chat/completions",
@@ -549,45 +737,7 @@ def _mistral_parecer(facts: dict[str, Any]) -> str | None:
                 "model": model,
                 "temperature": 0.2,
                 "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "Você é analista de leilão judicial de imóvel no Brasil. "
-                            "Escreva 2 parágrafos curtos, objetivos, em português. "
-                            "Use só os fatos do JSON. Não invente valor, dívida, ocupação nem desconto. "
-                            "lance_atual é o preço pedido agora, NÃO valor de arrematação. "
-                            "Nunca escreva que o imóvel foi arrematado, vendido ou encerrado "
-                            "salvo se status for encerrado. "
-                            "Se status for aguardando, diga que o leilão ainda não abriu. "
-                            "Valor venal do terreno NÃO é o valor do imóvel; use avaliacao "
-                            "ou valor_venal_imovel. Área útil é area_edificacao, não area_terreno. "
-                            "avaliacao_fonte=venal_imovel é IPTU, não laudo de mercado. "
-                            "avaliacao_data antiga é oportunidade: o juiz costuma só corrigir "
-                            "monetariamente, abaixo do mercado. 1 ano já é bom; 5+ melhor; 10+ melhor ainda. "
-                            "Lance acima de laudo antigo NÃO é overpay e NÃO é ponto negativo. "
-                            "IPTU em leilão judicial em geral é abatido; condomínio NÃO se abate. "
-                            "Lance atual acima do inicial é concorrência, não ponto negativo. "
-                            "Alerta o lance atual em relação à avaliação recente; laudo antigo continua oportunidade. "
-                            "Leiloeiro da mesma casa (Calil, Zuk, Vegas, Mega, Lance) no site e no edital "
-                            "é o mesmo — não diga divergência. "
-                            "citacao nao_citado ou pendente: diga para não entrar. "
-                            "Usufruto só se riscos.usufruto. Meação só se riscos.meacao for true — "
-                            "fração ideal de condomínio e regra genérica de cônjuge NÃO são meação. "
-                            "Não diga 'não entre' salvo se nao_entrar for true. "
-                            "Não invente praça, desconto judicial, ocupação nem débito. "
-                            "avaliacao_data_origem=processo é a data do processo, NÃO do laudo. "
-                            "Se datajud for nao_encontrado ou indisponivel, diga que o DataJud "
-                            "não trouxe movimentos. Se docs_limitados, diga que faltou texto de "
-                            "matrícula/laudo e não afirme o que não leu. "
-                            "DataJud só traz movimentos, não peças do processo. "
-                            "valor_causa_execucao é o valor da dívida que originou a execução "
-                            "(vindo do processo), NUNCA o valor do imóvel nem a avaliação — não "
-                            "confunda os dois. peticoes_recentes_processo é só contexto de "
-                            "atividade do processo, não confirma nem descarta risco nenhum. "
-                            "Não use adjetivo de venda. Se faltar dado, diga que falta. "
-                            "Explique o score com os motivos."
-                        ),
-                    },
+                    {"role": "system", "content": _SYSTEM_PARECER},
                     {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
                 ],
             },
@@ -597,7 +747,9 @@ def _mistral_parecer(facts: dict[str, Any]) -> str | None:
             return None
         content = (((r.json().get("choices") or [{}])[0].get("message") or {}).get("content")) or ""
         text = str(content).strip()
-        return text[:1800] if text else None
+        if not text or parecer_parece_json(text):
+            return None
+        return text[:PARECER_MAX]
     except Exception:
         return None
 
@@ -633,6 +785,9 @@ def avaliar_lote(
     fetch_file=fetch_pdf,
     fetch_datajud=None,
     fetch_infosimples=None,
+    fetch_gliner=None,
+    fetch_parecer=None,
+    fetch_apify=None,
     write_ai: bool = True,
     anexos: Optional[list[tuple[str, bytes]]] = None,
     ocr=None,
@@ -652,6 +807,9 @@ def avaliar_lote(
         fetch_file=fetch_file,
         fetch_datajud=fetch_datajud,
         fetch_infosimples=fetch_infosimples,
+        fetch_gliner=fetch_gliner,
+        fetch_parecer=fetch_parecer,
+        fetch_apify=fetch_apify,
         write_ai=write_ai,
         anexos=anexos,
         ocr=ocr,
