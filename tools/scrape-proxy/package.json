@@ -1,0 +1,13 @@
+{
+  "name": "leiloes-scrape-proxy",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Proxy residencial para scrape Calil/Vegas (IP da casa)",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

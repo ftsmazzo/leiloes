@@ -17,3 +17,12 @@ Tudo roda na implantação: você conecta o repositório, o Easy Panel faz o bui
   **Importante:** no Next.js essa variável é usada no **build**. Se o painel tiver "Build args" ou "Variáveis de build", defina `NEXT_PUBLIC_API_URL` também lá com a mesma URL. Depois de alterar, faça **Implantar** de novo no frontend para que o build use a URL correta.
 
 Nada de shell: as variáveis são definidas na interface do Easy Panel em cada serviço.
+
+## Calil e Vegas (proxy na casa)
+
+O IP do Easy Panel costuma ser bloqueado nessas duas fontes. No PC rode `tools/scrape-proxy` (ver README na pasta) e no **backend** defina:
+
+- `SCRAPE_PROXY_URL` — URL do Funnel/túnel (sem `/fetch` no final)
+- `SCRAPE_PROXY_TOKEN` — o mesmo `TOKEN` do processo no PC
+
+Zuk, Mega, Lance e TRT5 seguem direto do VPS.
