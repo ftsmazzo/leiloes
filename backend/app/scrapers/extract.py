@@ -245,9 +245,14 @@ def format_card(
     ):
         matricula = matricula_from_text(title, description, matricula if isinstance(matricula, str) else "")
     matricula = _clip_field(matricula, 40)
+    # Texto do anúncio manda: área já gravada (ex. «6908 m²») pode ser
+    # parse velho; se o título/descrição trouxer m², reparseia.
+    parsed_area = area_from_text(title, description)
     area = out.get("area")
-    if not isinstance(area, str) or re.match(r"0+\s*m", area):
-        area = area_from_text(title, description)
+    if parsed_area:
+        area = parsed_area
+    elif not isinstance(area, str) or re.match(r"0+\s*m", area):
+        area = None
     label = TIPO_LABELS.get(str(tipo), "Lote") if tipo else "Lote"
     where = " · ".join(p for p in (bairro, cidade) if isinstance(p, str) and p.strip())
     headline = f"{label} · {where}" if where else label

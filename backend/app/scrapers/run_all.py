@@ -67,6 +67,13 @@ def _enrich_auctions(auctions, cap: int = 12) -> None:
             filled = enrich_extra(lot.title, lot.description, extra, use_ai=used < cap)
             if filled.get("extract") in ("gliner", "mistral"):
                 used += 1
+            for stale in (
+                "valor_mercado_estimado",
+                "valor_m2_regiao",
+                "valor_m2_fonte",
+                "valor_m2_mes",
+            ):
+                filled.pop(stale, None)
             mercado = estimate_market_value(
                 filled.get("cidade"),
                 filled.get("area"),

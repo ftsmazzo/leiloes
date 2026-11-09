@@ -44,12 +44,44 @@ def test_lot_to_out_exposes_market_reference_when_present():
         current_bid=200000,
         reference_value=None,
         url=None,
-        raw_data='{"cidade": "São Paulo", "area": "50 m²", "valor_m2_regiao": 12055.0, "valor_mercado_estimado": 602750.0}',
+        raw_data='{"cidade": "São Paulo", "area": "50 m²", "tipo": "apartamento", "valor_m2_regiao": 12055.0, "valor_mercado_estimado": 602750.0}',
         updated_at=datetime(2026, 9, 17),
     )
     out = lot_to_out(lot, "calil")
-    assert out.valor_m2_regiao == 12055.0
-    assert out.valor_mercado_estimado == 602750.0
+    # FipeZap ao vivo (tabela atual), não o valor stale do raw_data.
+    assert out.valor_m2_regiao == 12143.0
+    assert out.valor_mercado_estimado == 607150.0
+    assert out.valor_m2_fonte == "fipezap"
+
+
+def test_lot_to_out_recalcula_mercado_com_area_reparada():
+    """Vegas Jardim Europa: raw com 6908 m² + mercado absurdo → card usa 76,7508."""
+    lot = SimpleNamespace(
+        id=469,
+        auction_id=39,
+        external_id="9624",
+        title="Apartamento Lagoinha, Rib. Preto/SP",
+        description="área total de 76,7508 m², sendo 66,1738 m² de área exclusiva",
+        category="Imóvel",
+        minimum_bid=99833.5,
+        current_bid=99833.5,
+        reference_value=None,
+        url="https://www.vegasleiloes.com.br/item/9624/detalhes",
+        raw_data=json.dumps(
+            {
+                "cidade": "Ribeirão Preto",
+                "tipo": "apartamento",
+                "area": "6908 m²",
+                "valor_m2_regiao": 5344.0,
+                "valor_m2_fonte": "fipezap",
+                "valor_mercado_estimado": 36916352.0,
+            }
+        ),
+        updated_at=datetime(2026, 11, 9),
+    )
+    out = lot_to_out(lot, "vegas")
+    assert out.area == "76,7508 m²"
+    assert out.valor_mercado_estimado == round(5344.0 * 76.7508, 2)
 
 
 def test_lot_to_out_market_reference_absent_is_none_not_zero():
@@ -287,6 +319,7 @@ if __name__ == "__main__":
     test_lot_to_out_exposes_source_and_cidade()
     test_registry_sources_are_catalog_tabs()
     test_lot_to_out_exposes_market_reference_when_present()
+    test_lot_to_out_recalcula_mercado_com_area_reparada()
     test_lot_to_out_market_reference_absent_is_none_not_zero()
     test_lot_to_out_exposes_score_when_present()
     test_lot_to_out_score_absent_defaults_to_empty_motivos()
