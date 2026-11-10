@@ -309,23 +309,25 @@ export default function Home() {
           </button>
           {leitura ? (
             <p className="exemplo">
-              Leitura · 7 dias: {leitura.com_peca} com peça · {leitura.sem_peca} sem peça · {leitura.ocr_vazio} OCR
-              vazio
+              Últimos 7 dias: {leitura.com_peca} com peça pública · {leitura.sem_peca} ainda sem peça útil
             </p>
           ) : null}
         </form>
       </details>
 
       <div>
+        {!loading && lots.length > 0 ? (
+          <p className="cupom">
+            Próximo cupom: abra o dossiê de um lote com indício antes do próximo leilão.
+            {facets ? ` · ${facets.total_lots} no catálogo` : ''}
+          </p>
+        ) : null}
         <div className="cab-lista">
           <div>
             <h1 aria-live="polite">
-              {loading ? 'Carregando…' : `${lots.length} oportunidade${lots.length === 1 ? '' : 's'}`}
+              {loading ? 'Carregando…' : `${lots.length} lote${lots.length === 1 ? '' : 's'} na praça`}
             </h1>
-            <p>
-              Filtre e escolha um imóvel. A análise completa abre no dossiê.
-              {facets ? ` · ${facets.with_cidade}/${facets.total_lots} com cidade` : ''}
-            </p>
+            <p>Filtre o catálogo e abra o dossiê — indício antes do lance.</p>
           </div>
         </div>
 
@@ -360,6 +362,14 @@ export default function Home() {
 
         {!loading && !error && lots.length > 0 ? (
           <div className="lista">
+            <div className="lista-head" aria-hidden="true">
+              <span>Lote</span>
+              <span>Imóvel</span>
+              <span className="num">Lance</span>
+              <span className="num">Mercado</span>
+              <span>Veredito</span>
+              <span />
+            </div>
             {lots.map((lot) => (
               <LotRow key={lot.id} lot={lot} />
             ))}
@@ -370,13 +380,13 @@ export default function Home() {
           <summary>Como usar</summary>
           <ul>
             <li>
-              <b>Filtrar.</b> Busca, cidade, tipo, fonte e teto de lance usam os lotes já gravados no banco.
+              <b>Filtrar.</b> Busca, cidade, tipo, fonte e teto usam o que já está no catálogo.
             </li>
             <li>
-              <b>Analisar.</b> Abre o dossiê do imóvel. A avaliação lê a página pública e os PDFs públicos.
+              <b>Dossiê.</b> Abre o indício do imóvel com peças públicas e relatório imprimível.
             </li>
             <li>
-              <b>Sem norte.</b> Sem matrícula, laudo ou penhora útil, o sistema não trata o lote como oportunidade.
+              <b>Sem norte.</b> Sem matrícula, laudo ou penhora útil, não dá para aprofundar com confiança.
             </li>
           </ul>
         </details>
